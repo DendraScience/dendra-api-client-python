@@ -16,6 +16,7 @@ Parameters:
 '''
 
 import requests
+import json
 import pandas as pd
 import datetime as dt
 import pytz
@@ -23,6 +24,7 @@ from dateutil import tz
 from dateutil.parser import parse
 
 # Params
+#url = 'https://api.edge.dendra.science/v2/'
 url = 'https://api.dendra.science/v1/'
 headers = {"Content-Type":"application/json"}
 
@@ -64,7 +66,8 @@ def list_stations(orgslug='all',query_add='none'):
     query = {
         '$sort[name]': 1,
         '$select[name]': 1,
-        '$select[slug]': 1
+        '$select[slug]': 1,
+        '$limit': 2000
     }
 
     # Narrow query to one organization
@@ -85,6 +88,68 @@ def list_stations(orgslug='all',query_add='none'):
     assert r.status_code == 200
     rjson = r.json()
     return rjson['data']
+
+def list_datastreams_by_station_id(station_id,query_add = ''):
+    query = {
+        '$sort[name]': 1,
+        '$select[name]': 1,
+        'station_id': station_id,
+        '$limit': 2000
+    }
+    if(query_add != ''):
+        query.update(query_add)    
+
+    # Request JSON from Dendra         
+    r = requests.get(url + 'datastreams', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    return rjson['data']
+    
+# translate SensorDB to Dendra ID
+def get_datastream_id_from_dsid(dsid,orgslug='all',station_id = ''):
+    # Legacy SensorDB used integer DSID (DatastreamID).  
+    # This is a helper function to translate between Dendra datastream_id's and DSID's
+    query = {'$limit':2000}
+
+    # Narrow query to one station
+    if(station_id != ''):
+        query.update({'station_id':station_id})
+
+    # Narrow query to one org or loop through all organizations
+    org_list = list_organizations(orgslug)
+    if(len(org_list) == 0): 
+        print('ERROR: no organizations found with that acronym.')
+        return ''
+    # Build list of metadata 
+    bigjson = {'data':[]}
+    for org in org_list:
+        orgid = org['_id']
+        orgname = org['name']
+        #print(orgname,orgid,query)
+        query_org = query
+        query_org.update({'organization_id': orgid})
+        r = requests.get(url + 'datastreams', headers=headers, params=query)
+        assert r.status_code == 200
+        rjson = r.json()
+        if(len(rjson['data']) > 0):
+            bigjson['data'].extend(rjson['data'])
+            #print(orgname,len(rjson['data']))
+    dsid_list = []
+    for ds in bigjson['data']:
+        #print(ds['name'],ds['_id'])
+        if('external_refs' not in ds):
+            continue
+        for ref in ds['external_refs']:
+            if(ref['type'] == 'odm.datastreams.DatastreamID'):
+                #print("\t",ref['type'], ref['identifier'])
+                dsid_list.append([ref['identifier'],ds['_id']])
+    for row in dsid_list:
+        int_dsid = int(row[0])
+        datastream_id = row[1]
+        if(dsid == int_dsid):
+            #print('FOUND!',dsid,int_dsid,datastream_id)
+            return datastream_id
+
 
 # GET Metadata returns full metadata
 def get_datastream_by_id(datastream_id,query_add = ''):
