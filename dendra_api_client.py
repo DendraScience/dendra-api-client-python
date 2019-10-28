@@ -6,8 +6,11 @@ Date: 2019-05-12
 
 Purpose: 
 Simplifies pulling data from the https://dendra.science time-series data management system.
-Dendra API requires paging of records in sets of 2,000.  This library performs
+Dendra API requires paging of records in sets of 2,016.  This library performs
 that function automatically. 
+
+NOTE: the 'get_datapoints' function, which is the primary reason for this library is quite slow. It will
+be replaced in the next version when we have min.io set up on the server to handle very large requests.
 
 Parameters:
     query: a JSON object with the tags, organization, stations, and start/end times
@@ -22,10 +25,11 @@ import datetime as dt
 import pytz
 from dateutil import tz
 from dateutil.parser import parse
+from getpass import getpass
 
 # Params
-#url = 'https://api.edge.dendra.science/v2/'
-url = 'https://api.dendra.science/v1/'
+#url = 'https://api.edge.dendra.science/v1/'  # version 1 of the API has been deprecated
+url = 'https://api.edge.dendra.science/v2/'
 headers = {"Content-Type":"application/json"}
 
 # Time Helper Functions
@@ -40,8 +44,20 @@ def time_utc(str_time=""):
     return dt_time
 
 def time_format(dt_time=dt.datetime.now()):
-     str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S.%fZ")
+     str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S.%f")
      return str_time
+
+def authenticate(email):
+    data = {
+        'email': email,
+        'strategy': 'local',
+        'password': getpass()
+    }
+    r = requests.post(url+'authentication', json=data)
+    assert r.status_code == 201
+    token = r.json()['accessToken']
+    headers['Authorization'] = token
+    
 
 # List Functions help find what you are looking for, do not retreive full metadata
 def list_organizations(orgslug='all'):
@@ -152,7 +168,12 @@ def get_datastream_id_from_dsid(dsid,orgslug='all',station_id = ''):
 
 
 # GET Metadata returns full metadata
-def get_datastream_by_id(datastream_id,query_add = ''):
+def get_datastream_by_id(datastream_id,query_add = ''): 
+    # deprecated use get_meta_
+    rjson = get_meta_datastream_by_id(datastream_id,query_add)
+    return rjson
+    
+def get_meta_datastream_by_id(datastream_id,query_add = ''):
     query = { '_id': datastream_id }
     if(query_add != ''):
         query.update(query_add)
@@ -161,39 +182,69 @@ def get_datastream_by_id(datastream_id,query_add = ''):
     rjson = r.json()
     return rjson['data'][0]   
 
+def get_meta_station_by_id(station_id,query_add = ''):
+    query = { '_id': station_id }
+    if(query_add != ''):
+        query.update(query_add)
+    r = requests.get(url + 'stations', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    return rjson['data'][0]   
 
-# GET Datapoints gets the good stuff, actual datavalues  
-def get_datapoints(datastream_id,time_start,time_end=time_format()):
-    # Get Datapoints queries only one datastream.  
-    # Returns a Pandas DataFrame columns[index,timezone_offset_sec,timestamp,<name of datastream>]
+# GET Datapoints returns actual datavalues for only one datastream.  
+# Returns a Pandas DataFrame columns. Both local and UTC time will be returned.
+# Parameters: time_end is optional. Defaults to now. time_type is optional default 'local', either 'utc' or 'local' 
+# if you choose 'utc', timestamps must have 'Z' at the end to indicate UTC time.
+def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='local'):        
     query = {
         'datastream_id': datastream_id,
         'time[$gt]': time_start,
         'time[$lt]': time_end,
         '$sort[time]': 1,
-        'time_local': 1,
-        '$limit': 2000
+        '$limit': 2016
     } 
+    if(time_type != 'utc'): 
+        query.update({ 'time_local': "true" })
+    
+    # Dendra requires paging of 2,000 records maximum at a time.
+    # To get around this, we loop through multiple requests and append
+    # the results into a single dataset.
     r = requests.get(url + 'datapoints', headers=headers, params=query)
     assert r.status_code == 200
     rjson = r.json()
     bigjson = rjson
     while(len(rjson['data']) > 0):
         df = pd.DataFrame.from_records(bigjson['data'])
-        time_last = df['t'].max()
+        time_last = df['lt'].max()
         query['time[$gt]'] = time_last
         r = requests.get(url + 'datapoints', headers=headers, params=query)
         assert r.status_code == 200
         rjson = r.json()
         bigjson['data'].extend(rjson['data'])
-    # Create Pandas DataFrame with data and set time as index
-    df = pd.DataFrame.from_records(bigjson['data'])
-    df.set_index(df.t, inplace=True)
-    # assign a human readable name to the data column
-    datastream_meta = get_datastream_by_id(datastream_id,{'$select[name]':1})
-    datastream_name = datastream_meta['name']
-    df.rename(columns={'o':'timezone_offset_sec','t':'timestamp_utc','v':datastream_name},inplace=True)
+
+    # Create Pandas DataFrame and set time as index
+    # If the datastream has data for the time period, populate DataFrame
+    if(len(bigjson['data']) > 0):
+        df = pd.DataFrame.from_records(bigjson['data'])
+    else:
+        df = pd.DataFrame(columns={'lt','t','v'})
+        
+    # Get human readable name for data column
+    datastream_meta = get_meta_datastream_by_id(datastream_id,{'$select[name]':1,'$select[station_id]':1})
+    station_meta = get_meta_station_by_id(datastream_meta['station_id'],{'$select[slug]':1})
+    stn = station_meta['slug'].replace('-',' ').title().replace(' ','')
+    datastream_name = stn+'_'+datastream_meta['name'].replace(' ','_')
+    
+    # Rename columns then set index to timestamp local or utc
+    df.rename(columns={'lt':'timestamp_local','t':'timestamp_utc','v':datastream_name},inplace=True)
+    if(time_type == 'utc'):
+        df.set_index('timestamp_utc', inplace=True, drop=True)  
+    else:
+        df.set_index('timestamp_local', inplace=True, drop=True)
+
+    # Return DataFrame
     return df
+
 
 # Lookup is an earlier attempt. Use get_datapoints unless you have to use this.    
 def __lookup_datapoints_subquery(bigjson,query,endpoint='datapoints/lookup'):
@@ -219,11 +270,11 @@ def lookup_datapoints(query,endpoint='datapoints/lookup',interval=5):
         time_end_original = parse(query['time[$lt]'])
         #time_end_original = pytz.utc.localize(time_end_original)
     else: 
-    	time_end_original_local = dt.datetime.now(tz.tzlocal())
-    	time_end_original = time_end_original_local.astimezone(pytz.utc)
+        time_end_original_local = dt.datetime.now(tz.tzlocal())
+        time_end_original = time_end_original_local.astimezone(pytz.utc)
     
-    # Paging limit: 2000 records. 
-    interval2k = (dt.timedelta(minutes=interval) * 2000 )
+    # Paging limit: 2016 records. 
+    interval2k = (dt.timedelta(minutes=interval) * 2016 )
 
     # Perform repeat queries until the time_end catches up with the target end date
     time_start = time_start_original
@@ -233,7 +284,7 @@ def lookup_datapoints(query,endpoint='datapoints/lookup',interval=5):
         bigjson = __lookup_datapoints_subquery(bigjson,query,endpoint)
         time_start = time_end
         time_end = time_start+interval2k 
-    # One final pull after loop for the under 2000 records left
+    # One final pull after loop for the under 2016 records left
     bigjson = __lookup_datapoints_subquery(bigjson,query,endpoint)
 
     # Count total records pulled and update limit metadata
@@ -325,11 +376,11 @@ def __main():
     if(bdatastream_id == True):
         # Get all Metadata about one Datastream 'South Meadow WS, Air Temp C'        
         airtemp_id = '5ae8793efe27f424f9102b87'
-        airtemp_meta = get_datastream_by_id(airtemp_id)
+        airtemp_meta = get_meta_datastream_by_id(airtemp_id)
         print(airtemp_meta)
         
         # Get only Name from Metadata using query_add
-        airtemp_meta = get_datastream_by_id(airtemp_id,{'$select[name]':1})
+        airtemp_meta = get_meta_datastream_by_id(airtemp_id,{'$select[name]':1})
         print(airtemp_meta)
                 
     ####################        
