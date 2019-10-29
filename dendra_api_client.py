@@ -44,7 +44,7 @@ def time_utc(str_time=""):
     return dt_time
 
 def time_format(dt_time=dt.datetime.now()):
-     str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S.%f")
+     str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
      return str_time
 
 def authenticate(email):
@@ -83,7 +83,7 @@ def list_stations(orgslug='all',query_add='none'):
         '$sort[name]': 1,
         '$select[name]': 1,
         '$select[slug]': 1,
-        '$limit': 2000
+        '$limit': 2016
     }
 
     # Narrow query to one organization
@@ -110,7 +110,7 @@ def list_datastreams_by_station_id(station_id,query_add = ''):
         '$sort[name]': 1,
         '$select[name]': 1,
         'station_id': station_id,
-        '$limit': 2000
+        '$limit': 2016
     }
     if(query_add != ''):
         query.update(query_add)    
@@ -125,7 +125,7 @@ def list_datastreams_by_station_id(station_id,query_add = ''):
 def get_datastream_id_from_dsid(dsid,orgslug='all',station_id = ''):
     # Legacy SensorDB used integer DSID (DatastreamID).  
     # This is a helper function to translate between Dendra datastream_id's and DSID's
-    query = {'$limit':2000}
+    query = {'$limit':2016}
 
     # Narrow query to one station
     if(station_id != ''):
@@ -191,17 +191,22 @@ def get_meta_station_by_id(station_id,query_add = ''):
     rjson = r.json()
     return rjson['data'][0]   
 
+
 # GET Datapoints returns actual datavalues for only one datastream.  
 # Returns a Pandas DataFrame columns. Both local and UTC time will be returned.
 # Parameters: time_end is optional. Defaults to now. time_type is optional default 'local', either 'utc' or 'local' 
 # if you choose 'utc', timestamps must have 'Z' at the end to indicate UTC time.
-def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='local'):        
+
+def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='local'):
+    if(time_type == 'utc' and time_end[-1] != 'Z'):
+        time_end += 'Z'
+        
     query = {
         'datastream_id': datastream_id,
         'time[$gt]': time_start,
         'time[$lt]': time_end,
-        '$sort[time]': 1,
-        '$limit': 2016
+        '$sort[time]': "1",
+        '$limit': "2016"
     } 
     if(time_type != 'utc'): 
         query.update({ 'time_local': "true" })
@@ -235,7 +240,7 @@ def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='lo
     stn = station_meta['slug'].replace('-',' ').title().replace(' ','')
     datastream_name = stn+'_'+datastream_meta['name'].replace(' ','_')
     
-    # Rename columns then set index to timestamp local or utc
+    # Rename columns, then set index to timestamp local or utc 
     df.rename(columns={'lt':'timestamp_local','t':'timestamp_utc','v':datastream_name},inplace=True)
     if(time_type == 'utc'):
         df.set_index('timestamp_utc', inplace=True, drop=True)  
