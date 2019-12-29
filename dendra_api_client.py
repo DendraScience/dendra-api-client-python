@@ -15,7 +15,7 @@ be replaced in the next version when we have min.io set up on the server to hand
 Parameters:
     query: a JSON object with the tags, organization, stations, and start/end times
     endpoint: what API endpoint to query. 'datapoints/lookup' (default), 'station','datastream','datapoint'
-    interval: datalogger time between records, integer. 5 = ERCZO (default), 10 = UCNRS, 15 = USGS
+    interval: datalogger minutes between records, integer. 5 = ERCZO (default), 10 = UCNRS, 15 = USGS
 '''
 
 import requests
@@ -26,6 +26,7 @@ import pytz
 from dateutil import tz
 from dateutil.parser import parse
 from getpass import getpass
+import concurrent.futures
 
 # Params
 #url = 'https://api.edge.dendra.science/v1/'  # version 1 of the API has been deprecated
@@ -214,8 +215,11 @@ def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='lo
     # Dendra requires paging of 2,000 records maximum at a time.
     # To get around this, we loop through multiple requests and append
     # the results into a single dataset.
-    r = requests.get(url + 'datapoints', headers=headers, params=query)
-    assert r.status_code == 200
+    try:
+        r = requests.get(url + 'datapoints', headers=headers, params=query)
+        assert r.status_code == 200
+    except:
+        return r.status_code
     rjson = r.json()
     bigjson = rjson
     while(len(rjson['data']) > 0):
@@ -248,6 +252,44 @@ def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='lo
         df.set_index('timestamp_local', inplace=True, drop=True)
 
     # Return DataFrame
+    return df
+
+# GET Datapoints from List returns a dataframe of datapoints from a list of datastream ids. The function is 
+# threaded for speed.  List must be an array of text variables which are datastream ids.  The first datastream
+# on the list will create the time-index, so it is best if this one is the most complete of the list. If it has 
+# time gaps, the rest of the dataframe can be comprimised.  This may need to be changes in the future.
+# All requirements of above get_datapoints apply to get_datapoints_from_list.
+def get_datapoints_from_id_list(datastream_id_list,time_start,time_end=time_format(),time_type='local'):
+    i = 0
+    boo_new = True
+    dftemp_list = [] # list of dataframes from the results
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for dsid in datastream_id_list:
+            i += 1
+            future = executor.submit(get_datapoints,dsid,time_start,time_end,'local')
+            dftemp_list.append(future)
+
+        for future in concurrent.futures.as_completed(dftemp_list):
+            dftemp = future.result()
+            #print(dftemp.columns)
+
+            # Check to see if any datapoints were returned.  
+            # Many datastreams are not functional for the desired time frame.
+            # If none, then skip the datastream and continue
+            if(len(dftemp) == 0):
+                    print(i,dftemp.columns[1],'No values, skipping...') 
+                    continue
+            # If there are datapoints, check to see if the dataframe has been created yet. 
+            # If not, create, if so, add another column
+            if(boo_new == True):
+                df = dftemp
+                boo_new = False
+                print(i,dftemp.columns[1],'NEW dataframe created!')
+            else:
+                dftemp.drop(dftemp.columns[0],axis=1,inplace=True)
+                df = df.merge(dftemp,how="left",left_index=True,right_index=True)
+                print(i,dftemp.columns[0],'added.')
     return df
 
 
