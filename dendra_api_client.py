@@ -44,9 +44,12 @@ def time_utc(str_time=""):
             dt_time = dt_time.astimezone(pytz.utc)
     return dt_time
 
-def time_format(dt_time=dt.datetime.now()):
+def time_format(dt_time=dt.datetime.now(),time_type='local'):
+    if(time_type == 'utc'):
+     str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%SZ") # "%Y-%m-%dT%H:%M:%S.%f"
+    else:
      str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
-     return str_time
+    return str_time
 
 def authenticate(email):
     data = {
@@ -267,7 +270,7 @@ def get_datapoints_from_id_list(datastream_id_list,time_start,time_end=time_form
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for dsid in datastream_id_list:
             i += 1
-            future = executor.submit(get_datapoints,dsid,time_start,time_end,'local')
+            future = executor.submit(get_datapoints,dsid,time_start,time_end,time_type)
             dftemp_list.append(future)
 
         for future in concurrent.futures.as_completed(dftemp_list):
