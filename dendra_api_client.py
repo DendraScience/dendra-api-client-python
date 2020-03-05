@@ -44,12 +44,9 @@ def time_utc(str_time=""):
             dt_time = dt_time.astimezone(pytz.utc)
     return dt_time
 
-def time_format(dt_time=dt.datetime.now(),time_type='local'):
-    if(time_type == 'utc'):
-     str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%SZ") # "%Y-%m-%dT%H:%M:%S.%f"
-    else:
+def time_format(dt_time=dt.datetime.now()):
      str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
-    return str_time
+     return str_time
 
 def authenticate(email):
     data = {
@@ -178,6 +175,10 @@ def get_datastream_by_id(datastream_id,query_add = ''):
     return rjson
     
 def get_meta_datastream_by_id(datastream_id,query_add = ''):
+    if(type(datastream_id) is not str):
+        return 'INVALID DATASTREAM_ID (bad type)'
+    if(len(datastream_id) != 24):
+        return 'INVALID DATASTREAM_ID (wrong length)'
     query = { '_id': datastream_id }
     if(query_add != ''):
         query.update(query_add)
@@ -187,6 +188,10 @@ def get_meta_datastream_by_id(datastream_id,query_add = ''):
     return rjson['data'][0]   
 
 def get_meta_station_by_id(station_id,query_add = ''):
+    if(type(datastream_id) is not str):
+        return 'INVALID DATASTREAM_ID (bad type)'
+    if(len(datastream_id) != 24):
+        return 'INVALID DATASTREAM_ID (wrong length)'
     query = { '_id': station_id }
     if(query_add != ''):
         query.update(query_add)
@@ -202,6 +207,10 @@ def get_meta_station_by_id(station_id,query_add = ''):
 # if you choose 'utc', timestamps must have 'Z' at the end to indicate UTC time.
 
 def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='local'):
+    if(type(datastream_id) is not str):
+        return 'INVALID DATASTREAM_ID (bad type)'
+    if(len(datastream_id) != 24):
+        return 'INVALID DATASTREAM_ID (wrong length)'
     if(time_type == 'utc' and time_end[-1] != 'Z'):
         time_end += 'Z'
         
@@ -260,7 +269,7 @@ def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='lo
 # GET Datapoints from List returns a dataframe of datapoints from a list of datastream ids. The function is 
 # threaded for speed.  List must be an array of text variables which are datastream ids.  The first datastream
 # on the list will create the time-index, so it is best if this one is the most complete of the list. If it has 
-# time gaps, the rest of the dataframe can be comprimised.  This may need to be changes in the future.
+# time gaps, the rest of the dataframe can be compromised.  This may need to be changes in the future.
 # All requirements of above get_datapoints apply to get_datapoints_from_list.
 def get_datapoints_from_id_list(datastream_id_list,time_start,time_end=time_format(),time_type='local'):
     i = 0
@@ -270,19 +279,20 @@ def get_datapoints_from_id_list(datastream_id_list,time_start,time_end=time_form
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for dsid in datastream_id_list:
             i += 1
-            future = executor.submit(get_datapoints,dsid,time_start,time_end,time_type)
+            future = executor.submit(get_datapoints,dsid,time_start,time_end,'local')
             dftemp_list.append(future)
 
         for future in concurrent.futures.as_completed(dftemp_list):
             dftemp = future.result()
-            #print(dftemp.columns)
-
             # Check to see if any datapoints were returned.  
             # Many datastreams are not functional for the desired time frame.
             # If none, then skip the datastream and continue
-            if(len(dftemp) == 0):
-                    print(i,dftemp.columns[1],'No values, skipping...') 
-                    continue
+            if(type(dftemp) is int):
+                print(i,"ERROR: datastream failed to retrieve. check authentication or ID("+datastream_id_list[i]+")")
+                continue
+            elif(dftemp.empty):
+                print("Datastream has no data for this time period. Skipping.")
+                continue             
             # If there are datapoints, check to see if the dataframe has been created yet. 
             # If not, create, if so, add another column
             if(boo_new == True):
