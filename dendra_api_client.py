@@ -188,10 +188,10 @@ def get_meta_datastream_by_id(datastream_id,query_add = ''):
     return rjson['data'][0]   
 
 def get_meta_station_by_id(station_id,query_add = ''):
-    if(type(datastream_id) is not str):
-        return 'INVALID DATASTREAM_ID (bad type)'
-    if(len(datastream_id) != 24):
-        return 'INVALID DATASTREAM_ID (wrong length)'
+    if(type(station_id) is not str):
+        return 'INVALID station_id (bad type)'
+    if(len(station_id) != 24):
+        return 'INVALID station_id (wrong length)'
     query = { '_id': station_id }
     if(query_add != ''):
         query.update(query_add)
