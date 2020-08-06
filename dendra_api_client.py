@@ -2,7 +2,8 @@
 Dendra API Query
 
 Author: Collin Bode
-Date: 2019-06-03
+Date: 2019-05-12
+Modified: 2020-03-26
 
 Purpose: 
 Simplifies pulling data from the https://dendra.science time-series data management system.
@@ -16,10 +17,6 @@ Parameters:
     query: a JSON object with the tags, organization, stations, and start/end times
     endpoint: what API endpoint to query. 'datapoints/lookup' (default), 'station','datastream','datapoint'
     interval: datalogger minutes between records, integer. 5 = ERCZO (default), 10 = UCNRS, 15 = USGS
-
-References:
-code repository:  https://github.com/DendraScience
-API documentation: https://dendrascience.github.io/dendra-json-schema
 '''
 
 import requests
@@ -48,9 +45,12 @@ def time_utc(str_time=""):
             dt_time = dt_time.astimezone(pytz.utc)
     return dt_time
 
-def time_format(dt_time=dt.datetime.now()):
-     str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
-     return str_time
+def time_format(dt_time=dt.datetime.now(), time_type='local'):
+    if(time_type == 'utc'):
+        str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%SZ") # "%Y-%m-%dT%H:%M:%S.%f"
+    else:
+        str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
+    return str_time
 
 def authenticate(email):
     data = {
@@ -65,19 +65,8 @@ def authenticate(email):
     
 
 # List Functions help find what you are looking for, do not retreive full metadata
-def get_organization_id(orgslug = ''):
-    # current options: 'erczo','ucnrs','chi','ucanr','tnc','pepperwood' (may change in future)
-    query = {
-        '$select[_id]':1,
-        'slug': orgslug
-    }   
-    r = requests.get(url + 'organizations', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data'][0]['_id']    
-    
 def list_organizations(orgslug='all'):
-    # current options: 'erczo','ucnrs','chi','ucanr','tnc','pepperwood'
+    """ options: 'erczo','ucnrs','chi' """
     query = {
         '$sort[name]': 1,
         '$select[name]':1,
@@ -92,9 +81,10 @@ def list_organizations(orgslug='all'):
     return rjson['data']    
 
 def list_stations(orgslug='all',query_add='none'):
-    # orgslug options: 'erczo','ucnrs','chi'
-    # NOTE: can either do all orgs or one org. No option to list some,
-    #       unless you custom add to the query.
+    """
+    orgslug options: 'erczo','ucnrs','chi'
+    NOTE: can either do all orgs or one org. No option to list some,
+          unless you custom add to the query."""
     query = {
         '$sort[name]': 1,
         '$select[name]': 1,
@@ -121,6 +111,7 @@ def list_stations(orgslug='all',query_add='none'):
     rjson = r.json()
     return rjson['data']
 
+
 def list_datastreams_by_station_id(station_id,query_add = ''):
     query = {
         '$sort[name]': 1,
@@ -137,90 +128,9 @@ def list_datastreams_by_station_id(station_id,query_add = ''):
     rjson = r.json()
     return rjson['data']
 
-def list_datastreams_by_query(query_add = '',station_id = ''):
-    query = {
-        '$sort[name]': 1,
-        '$select[name]': 1,
-        '$limit': 2016
-    }
-    if(query_add != ''):
-        query.update(query_add)    
-    if(station_id != ''):
-        query.update({'station_id': station_id})
-        
-    # Request JSON from Dendra         
-    r = requests.get(url + 'datastreams/lookup', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data']
-
-def list_datastreams_by_medium_variable(medium = '',variable = '',aggregate = '', station_id = '', orgslug = '', query_add = ''):
-    # parameters: 
-    # medium: Air, Water, Soil, etc 
-    # variable: Temperature, Moisture, Radiation, etc
-    # aggregate: Minimum, Average, Maximum, Cumulative
-    # station_id: MongoID
-    # orgslug: shortname (currently erczo, ucnrs, chi, ucanr, tnc, pepperwood)
-    # query_add: JSON query please see documentation https://dendrascience.github.io/dendra-json-schema/
-    query = {
-        '$sort[name]': 1,
-        '$select[name]': 1,
-        '$limit': 2016
-    }
-    if(medium != ''):
-        query.update({'terms_info.class_tags[$all][0]':"ds_Medium_"+medium})
-    if(variable != ''):
-        query.update({'terms_info.class_tags[$all][1]':"ds_Variable_"+variable})
-    if(aggregate != ''):
-        query.update({'terms_info.class_tags[$all][2]':"ds_Aggregate_"+aggregate})    
-    if(station_id != ''):
-        query.update({'station_id': station_id})
-    if(orgslug != ''):
-        orgid = get_organization_id(orgslug)
-        query.update({'organization_id': orgid})
-    if(query_add != ''):
-        query.update(query_add)
-        
-    # Request JSON from Dendra         
-    r = requests.get(url + 'datastreams', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
     
-    return rjson['data']
-
-def list_datastreams_by_measurement(measurement = '',aggregate = '', station_id = [], orgslug = '', query_add = ''):
-    # parameters: measurements and aggregates are spelled out and capitalized
-    # measurement: see dendra.science for list. No spaces. (AirTemperature, VolumetricWaterContent, RainfallCumulative, etc.
-    # aggregate: Minimum, Average, Maximum, Cumulative
-    # station_id: MongoID
-    # orgslug: shortname (currently erczo, ucnrs, chi, ucanr, tnc, pepperwood)
-    # query_add: JSON query please see documentation https://dendrascience.github.io/dendra-json-schema/
-    query = {
-        '$sort[name]': 1,
-        '$select[name]': 1,
-        '$limit': 2016
-    }
-    if(measurement != ''):
-        query.update({'terms_info.class_tags[$all][0]':"dq_Measurement_"+measurement})
-    if(aggregate != ''):
-        query.update({'terms_info.class_tags[$all][2]':"ds_Aggregate_"+aggregate})    
-    if(station_id != []):
-        query.update({'station_id': station_id})
-    if(orgslug != ''):
-        orgid = get_organization_id(orgslug)
-        query.update({'organization_id': orgid})
-    if(query_add != ''):
-        query.update(query_add)
-        
-    # Request JSON from Dendra         
-    r = requests.get(url + 'datastreams', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data']
-
-
-# translate SensorDB to Dendra ID
 def get_datastream_id_from_dsid(dsid,orgslug='all',station_id = ''):
+    """translate SensorDB to Dendra ID"""
     # Legacy SensorDB used integer DSID (DatastreamID).  
     # This is a helper function to translate between Dendra datastream_id's and DSID's
     query = {'$limit':2016}
@@ -298,23 +208,24 @@ def get_meta_station_by_id(station_id,query_add = ''):
     return rjson['data'][0]   
 
 
-# GET Datapoints returns actual datavalues for only one datastream.  
-# Returns a Pandas DataFrame columns. Both local and UTC time will be returned.
-# Parameters: time_end is optional. Defaults to now. time_type is optional default 'local', either 'utc' or 'local' 
-# if you choose 'utc', timestamps must have 'Z' at the end to indicate UTC time.
+# Get Datapoints Functions return the actual data
+def get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='local',name='default'):
+    """ GET Datapoints returns actual datavalues for only one datastream.  
+    Returns a Pandas DataFrame columns. Both local and UTC time will be returned.
+    Parameters: ends_before is optional. Defaults to now. time_type is optional default 'local', either 'utc' or 'local' 
+    if you choose 'utc', timestamps must have 'Z' at the end to indicate UTC time."""
 
-def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='local'):
     if(type(datastream_id) is not str):
         return 'INVALID DATASTREAM_ID (bad type)'
     if(len(datastream_id) != 24):
         return 'INVALID DATASTREAM_ID (wrong length)'
-    if(time_type == 'utc' and time_end[-1] != 'Z'):
-        time_end += 'Z'
+    if(time_type == 'utc' and ends_before[-1] != 'Z'):
+        ends_before += 'Z'
         
     query = {
         'datastream_id': datastream_id,
-        'time[$gt]': time_start,
-        'time[$lt]': time_end,
+        'time[$gte]': begins_at,
+        'time[$lt]': ends_before,
         '$sort[time]': "1",
         '$limit': "2016"
     } 
@@ -348,10 +259,13 @@ def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='lo
         df = pd.DataFrame(columns={'lt','t','v'})
         
     # Get human readable name for data column
-    datastream_meta = get_meta_datastream_by_id(datastream_id,{'$select[name]':1,'$select[station_id]':1})
-    station_meta = get_meta_station_by_id(datastream_meta['station_id'],{'$select[slug]':1})
-    stn = station_meta['slug'].replace('-',' ').title().replace(' ','')
-    datastream_name = stn+'_'+datastream_meta['name'].replace(' ','_')
+    if(name != 'default'):
+        datastream_name = name
+    else:
+        datastream_meta = get_meta_datastream_by_id(datastream_id,{'$select[name]':1,'$select[station_id]':1})
+        station_meta = get_meta_station_by_id(datastream_meta['station_id'],{'$select[slug]':1})
+        stn = station_meta['slug'].replace('-',' ').title().replace(' ','')
+        datastream_name = stn+'_'+datastream_meta['name'].replace(' ','_')
     
     # Rename columns, then set index to timestamp local or utc 
     df.rename(columns={'lt':'timestamp_local','t':'timestamp_utc','v':datastream_name},inplace=True)
@@ -363,29 +277,34 @@ def get_datapoints(datastream_id,time_start,time_end=time_format(),time_type='lo
     # Return DataFrame
     return df
 
-# GET Datapoints from List returns a dataframe of datapoints from a list of datastream ids. The function is 
-# threaded for speed.  List must be an array of text variables which are datastream ids.  The first datastream
-# on the list will create the time-index, so it is best if this one is the most complete of the list. If it has 
-# time gaps, the rest of the dataframe can be compromised.  This may need to be changes in the future.
-# All requirements of above get_datapoints apply to get_datapoints_from_list.
-def get_datapoints_from_id_list(datastream_id_list,time_start,time_end=time_format(),time_type='local'):
-    i = 0
+
+def get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_format(),time_type='local'):
+    """ GET Datapoints from List returns a dataframe of datapoints from a list of datastream ids. The function is 
+    threaded for speed.  List must be an array of text variables which are datastream ids.  The first datastream
+    on the list will create the time-index, so it is best if this one is the most complete of the list. If it has 
+    time gaps, the rest of the dataframe can be compromised.  This may need to be changes in the future.
+    All requirements of above get_datapoints apply to get_datapoints_from_list."""
+    i = -1
+    j = -1
     boo_new = True
     dftemp_list = [] # list of dataframes from the results
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for dsid in datastream_id_list:
             i += 1
-            future = executor.submit(get_datapoints,dsid,time_start,time_end,'local')
+            future = executor.submit(get_datapoints,dsid,begins_at,ends_before,time_type,'default')
             dftemp_list.append(future)
+            #print('in: ',i,datastream_id_list[i],dsid,future)
 
         for future in concurrent.futures.as_completed(dftemp_list):
+            j +=1
             dftemp = future.result()
+            #print('out"',j,datastream_id_list[j],dftemp)
             # Check to see if any datapoints were returned.  
             # Many datastreams are not functional for the desired time frame.
             # If none, then skip the datastream and continue
             if(type(dftemp) is int):
-                print(i,"ERROR: datastream failed to retrieve. check authentication or ID("+datastream_id_list[i]+")")
+                print(j,"ERROR: datastream failed to retrieve. check authentication or ID("+datastream_id_list[j]+")")
                 continue
             elif(dftemp.empty):
                 print("Datastream has no data for this time period. Skipping.")
@@ -395,14 +314,22 @@ def get_datapoints_from_id_list(datastream_id_list,time_start,time_end=time_form
             if(boo_new == True):
                 df = dftemp
                 boo_new = False
-                print(i,dftemp.columns[1],'NEW dataframe created!')
+                print(j,dftemp.columns[1],'NEW dataframe created!')
             else:
                 dftemp.drop(dftemp.columns[0],axis=1,inplace=True)
                 df = df.merge(dftemp,how="left",left_index=True,right_index=True)
-                print(i,dftemp.columns[0],'added.')
+                print(j,dftemp.columns[0],'added.')
     return df
 
-
+def get_datapoints_from_station_id(station_id,begins_at,ends_before=time_format(),time_type='local'):
+    """ Returns a dataframe with ALL datastreams associated with a particular station for the time period """
+    list = []
+    ds_list = list_datastreams_by_station_id(station_id)
+    for ds in ds_list:
+        list.append(ds['_id'])
+    df = get_datapoints_from_id_list(list,begins_at,ends_before,time_type)
+    return df
+        
 # Lookup is an earlier attempt. Use get_datapoints unless you have to use this.    
 def __lookup_datapoints_subquery(bigjson,query,endpoint='datapoints/lookup'):
     r = requests.get(url + endpoint, headers=headers, params=query)
@@ -418,34 +345,34 @@ def __lookup_datapoints_subquery(bigjson,query,endpoint='datapoints/lookup'):
 def lookup_datapoints(query,endpoint='datapoints/lookup',interval=5):    
     # Determine start and end timestamps
     # Start time
-    #time_start_original = dt.datetime.strptime(query['time[$gte]'],'%Y-%m-%dT%H:%M:%SZ')
-    time_start_original = parse(query['time[$gte]'])
-    #time_start_original = pytz.utc.localize(time_start_original)
+    #begins_at_original = dt.datetime.strptime(query['time[$gte]'],'%Y-%m-%dT%H:%M:%SZ')
+    begins_at_original = parse(query['time[$gte]'])
+    #begins_at_original = pytz.utc.localize(begins_at_original)
     # end time
     if('time[$lt]' in query):
-        #time_end_original = dt.datetime.strptime(query['time[$lt]'],'%Y-%m-%dT%H:%M:%SZ')
-        time_end_original = parse(query['time[$lt]'])
-        #time_end_original = pytz.utc.localize(time_end_original)
+        #ends_before_original = dt.datetime.strptime(query['time[$lt]'],'%Y-%m-%dT%H:%M:%SZ')
+        ends_before_original = parse(query['time[$lt]'])
+        #ends_before_original = pytz.utc.localize(ends_before_original)
     else: 
-        time_end_original_local = dt.datetime.now(tz.tzlocal())
-        time_end_original = time_end_original_local.astimezone(pytz.utc)
+        ends_before_original_local = dt.datetime.now(tz.tzlocal())
+        ends_before_original = ends_before_original_local.astimezone(pytz.utc)
     
     # Paging limit: 2016 records. 
     interval2k = (dt.timedelta(minutes=interval) * 2016 )
 
-    # Perform repeat queries until the time_end catches up with the target end date
-    time_start = time_start_original
-    time_end = time_start_original+interval2k
+    # Perform repeat queries until the ends_before catches up with the target end date
+    begins_at = begins_at_original
+    ends_before = begins_at_original+interval2k
     bigjson = {}
-    while(time_end < time_end_original and time_start < time_end_original):    
+    while(ends_before < ends_before_original and begins_at < ends_before_original):    
         bigjson = __lookup_datapoints_subquery(bigjson,query,endpoint)
-        time_start = time_end
-        time_end = time_start+interval2k 
+        begins_at = ends_before
+        ends_before = begins_at+interval2k 
     # One final pull after loop for the under 2016 records left
     bigjson = __lookup_datapoints_subquery(bigjson,query,endpoint)
 
     # Count total records pulled and update limit metadata
-    max_records = pd.date_range(start=time_start_original,end=time_end_original, tz='UTC',freq=str(interval)+'min')
+    max_records = pd.date_range(start=begins_at_original,end=ends_before_original, tz='UTC',freq=str(interval)+'min')
     for i in range(0,len(bigjson)):
         bigjson[i]['datapoints']['limit'] = len(max_records) 
 
