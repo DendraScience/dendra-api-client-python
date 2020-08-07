@@ -413,6 +413,10 @@ def get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_fo
                 boo_new = False
                 print(j,dftemp.columns[1],'NEW dataframe created!')
             else:
+                # Annotations are listed in a 'q' column. Remove for now.
+                if('q' in df.columns):
+                    dftemp.drop('q',axis=1,inplace=True)
+                # timestamp_utc column will be redundant if merged, so drop
                 dftemp.drop(dftemp.columns[0],axis=1,inplace=True)
                 df = df.merge(dftemp,how="left",left_index=True,right_index=True)
                 print(j,dftemp.columns[0],'added.')
@@ -420,11 +424,11 @@ def get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_fo
 
 def get_datapoints_from_station_id(station_id,begins_at,ends_before=time_format(),time_type='local'):
     """ Returns a dataframe with ALL datastreams associated with a particular station for the time period """
-    list = []
+    dlist = []
     ds_list = list_datastreams_by_station_id(station_id)
     for ds in ds_list:
-        list.append(ds['_id'])
-    df = get_datapoints_from_id_list(list,begins_at,ends_before,time_type)
+        dlist.append(ds['_id'])
+    df = get_datapoints_from_id_list(dlist,begins_at,ends_before,time_type)
     return df
         
 # Lookup is an earlier attempt. Use get_datapoints unless you have to use this.    
