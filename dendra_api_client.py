@@ -3,7 +3,7 @@ Dendra API Query
 
 Author: Collin Bode
 Date: 2019-05-12
-Modified: 2020-03-26
+Last Modified: 2020-08-06
 
 Purpose: 
 Simplifies pulling data from the https://dendra.science time-series data management system.
@@ -17,6 +17,10 @@ Parameters:
     query: a JSON object with the tags, organization, stations, and start/end times
     endpoint: what API endpoint to query. 'datapoints/lookup' (default), 'station','datastream','datapoint'
     interval: datalogger minutes between records, integer. 5 = ERCZO (default), 10 = UCNRS, 15 = USGS
+
+References:
+code repository:  https://github.com/DendraScience
+API documentation: https://dendrascience.github.io/dendra-json-schema
 '''
 
 import requests
@@ -65,8 +69,19 @@ def authenticate(email):
     
 
 # List Functions help find what you are looking for, do not retreive full metadata
+def get_organization_id(orgslug = ''):
+    # current options: 'erczo','ucnrs','chi','ucanr','tnc','pepperwood' (may change in future)
+    query = {
+        '$select[_id]':1,
+        'slug': orgslug
+    }   
+    r = requests.get(url + 'organizations', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    return rjson['data'][0]['_id']    
+
 def list_organizations(orgslug='all'):
-    """ options: 'erczo','ucnrs','chi' """
+    """ options: 'erczo','ucnrs','chi','tnc','ucanr','pepperwood' """
     query = {
         '$sort[name]': 1,
         '$select[name]':1,
@@ -79,6 +94,8 @@ def list_organizations(orgslug='all'):
     assert r.status_code == 200
     rjson = r.json()
     return rjson['data']    
+
+
 
 def list_stations(orgslug='all',query_add='none'):
     """
@@ -111,7 +128,6 @@ def list_stations(orgslug='all',query_add='none'):
     rjson = r.json()
     return rjson['data']
 
-
 def list_datastreams_by_station_id(station_id,query_add = ''):
     query = {
         '$sort[name]': 1,
@@ -122,6 +138,87 @@ def list_datastreams_by_station_id(station_id,query_add = ''):
     if(query_add != ''):
         query.update(query_add)    
 
+    # Request JSON from Dendra         
+    r = requests.get(url + 'datastreams', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    return rjson['data']
+
+def list_datastreams_by_query(query_add = '',station_id = ''):
+    query = {
+        '$sort[name]': 1,
+        '$select[name]': 1,
+        '$limit': 2016
+    }
+    if(query_add != ''):
+        query.update(query_add)    
+    if(station_id != ''):
+        query.update({'station_id': station_id})
+        
+    # Request JSON from Dendra         
+    r = requests.get(url + 'datastreams/lookup', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    return rjson['data']
+
+def list_datastreams_by_medium_variable(medium = '',variable = '',aggregate = '', station_id = '', orgslug = '', query_add = ''):
+    # parameters: 
+    # medium: Air, Water, Soil, etc 
+    # variable: Temperature, Moisture, Radiation, etc
+    # aggregate: Minimum, Average, Maximum, Cumulative
+    # station_id: MongoID
+    # orgslug: shortname (currently erczo, ucnrs, chi, ucanr, tnc, pepperwood)
+    # query_add: JSON query please see documentation https://dendrascience.github.io/dendra-json-schema/
+    query = {
+        '$sort[name]': 1,
+        '$select[name]': 1,
+        '$limit': 2016
+    }
+    if(medium != ''):
+        query.update({'terms_info.class_tags[$all][0]':"ds_Medium_"+medium})
+    if(variable != ''):
+        query.update({'terms_info.class_tags[$all][1]':"ds_Variable_"+variable})
+    if(aggregate != ''):
+        query.update({'terms_info.class_tags[$all][2]':"ds_Aggregate_"+aggregate})    
+    if(station_id != ''):
+        query.update({'station_id': station_id})
+    if(orgslug != ''):
+        orgid = get_organization_id(orgslug)
+        query.update({'organization_id': orgid})
+    if(query_add != ''):
+        query.update(query_add)
+        
+    # Request JSON from Dendra         
+    r = requests.get(url + 'datastreams', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    
+    return rjson['data']
+
+def list_datastreams_by_measurement(measurement = '',aggregate = '', station_id = [], orgslug = '', query_add = ''):
+    # parameters: measurements and aggregates are spelled out and capitalized
+    # measurement: see dendra.science for list. No spaces. (AirTemperature, VolumetricWaterContent, RainfallCumulative, etc.
+    # aggregate: Minimum, Average, Maximum, Cumulative
+    # station_id: MongoID
+    # orgslug: shortname (currently erczo, ucnrs, chi, ucanr, tnc, pepperwood)
+    # query_add: JSON query please see documentation https://dendrascience.github.io/dendra-json-schema/
+    query = {
+        '$sort[name]': 1,
+        '$select[name]': 1,
+        '$limit': 2016
+    }
+    if(measurement != ''):
+        query.update({'terms_info.class_tags[$all][0]':"dq_Measurement_"+measurement})
+    if(aggregate != ''):
+        query.update({'terms_info.class_tags[$all][2]':"ds_Aggregate_"+aggregate})    
+    if(station_id != []):
+        query.update({'station_id': station_id})
+    if(orgslug != ''):
+        orgid = get_organization_id(orgslug)
+        query.update({'organization_id': orgid})
+    if(query_add != ''):
+        query.update(query_add)
+        
     # Request JSON from Dendra         
     r = requests.get(url + 'datastreams', headers=headers, params=query)
     assert r.status_code == 200
