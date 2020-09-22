@@ -414,10 +414,10 @@ def get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_fo
                 print(j,dftemp.columns[1],'NEW dataframe created!')
             else:
                 # Annotations are listed in a 'q' column. Remove for now.
-                if('q' in df.columns):
+                if('q' in dftemp.columns):
                     dftemp.drop('q',axis=1,inplace=True)
                 # timestamp_utc column will be redundant if merged, so drop
-                dftemp.drop(dftemp.columns[0],axis=1,inplace=True)
+                dftemp.drop('timestamp_utc',axis=1,inplace=True)
                 df = df.merge(dftemp,how="left",left_index=True,right_index=True)
                 print(j,dftemp.columns[0],'added.')
     return df
