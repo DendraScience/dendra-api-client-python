@@ -96,7 +96,6 @@ def list_organizations(orgslug='all'):
     return rjson['data']    
 
 
-
 def list_stations(orgslug='all',query_add='none'):
     """
     orgslug options: 'erczo','ucnrs','chi'
@@ -194,6 +193,7 @@ def list_datastreams_by_medium_variable(medium = '',variable = '',aggregate = ''
     rjson = r.json()
     
     return rjson['data']
+
 
 def list_datastreams_by_measurement(measurement = '',aggregate = '', station_id = [], orgslug = '', query_add = ''):
     # parameters: measurements and aggregates are spelled out and capitalized
