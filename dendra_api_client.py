@@ -364,8 +364,14 @@ def get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='
         stn = station_meta['slug'].replace('-',' ').title().replace(' ','')
         datastream_name = stn+'_'+datastream_meta['name'].replace(' ','_')
     
-    # Rename columns, then set index to timestamp local or utc 
+    # Rename columns
     df.rename(columns={'lt':'timestamp_local','t':'timestamp_utc','v':datastream_name},inplace=True)
+
+    # Convert timestamp columns from 'object' to dt.datetime 
+    df.timestamp_local = pd.to_datetime(df.timestamp_local,format="%Y-%m-%dT%H:%M:%S")
+    df.timestamp_utc   = pd.to_datetime(df.timestamp_utc, format="%Y-%m-%dT%H:%M:%S.000Z")
+
+    # Set index to timestamp local or utc 
     if(time_type == 'utc'):
         df.set_index('timestamp_utc', inplace=True, drop=True)  
     else:
