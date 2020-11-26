@@ -326,9 +326,12 @@ def get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='
         '$sort[time]': "1",
         '$limit': "2016"
     } 
-    if(time_type != 'utc'): 
+    if(time_type == 'utc'):
+        time_col = 't'
+    else:
         query.update({ 'time_local': "true" })
-    
+        time_col = 'lt'
+        
     # Dendra requires paging of 2,000 records maximum at a time.
     # To get around this, we loop through multiple requests and append
     # the results into a single dataset.
@@ -341,7 +344,7 @@ def get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='
     bigjson = rjson
     while(len(rjson['data']) > 0):
         df = pd.DataFrame.from_records(bigjson['data'])
-        time_last = df['lt'].max()
+        time_last = df[time_col].max()  # issue#1 miguel
         query['time[$gt]'] = time_last
         r = requests.get(url + 'datapoints', headers=headers, params=query)
         assert r.status_code == 200
