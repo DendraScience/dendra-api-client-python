@@ -1,22 +1,50 @@
 '''
 Dendra API Query
 
-Author: Collin Bode
-Date: 2019-05-12
-Last Modified: 2020-08-06
+author: Collin Bode
+email: collin@berkeley.edu
 
 Purpose: 
 Simplifies pulling data from the https://dendra.science time-series data management system.
 Dendra API requires paging of records in sets of 2,016.  This library performs
 that function automatically. 
 
+Functions are grouped into four categories:
+
+Helper functions
+    time_utc(str_time="")
+    time_format(dt_time=dt.datetime.now(), time_type='local') # other option for time_type='utc'
+    authenticate(email)
+
+List: returns a simple JSON list of available objects
+    get_organization_id(orgslug)
+    list_organizations(orgslug='all')
+    list_stations(orgslug='all',query_add='none')
+    list_datastreams_by_station_id(station_id,query_add = '')
+    list_datastreams_by_query(query_add = '',station_id = '')
+    list_datastreams_by_medium_variable(medium = '',variable = '',aggregate = '', station_id = '', orgslug = '', query_add = '')
+    list_datastreams_by_measurement(measurement = '',aggregate = '', station_id = [], orgslug = '', query_add = '')
+
+Get_Meta: returns the full metadata object
+    get_meta_organization(orgslug='',orgid='')
+    get_meta_station_by_id(station_id,query_add = '')
+    get_meta_datastream_by_id(datastream_id,query_add = '')
+    get_meta_annotation(annotation_id,query_add = '')
+
+Get_Datapoints: returns timestamp,datavalue pairs
+    get_datastream_by_id(datastream_id,query_add = '') 
+    get_datastream_id_from_dsid(dsid,orgslug='all',station_id = '')
+    get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='local',name='default')
+    get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_format(),time_type='local')
+    get_datapoints_from_station_id(station_id,begins_at,ends_before=time_format(),time_type='local')
+
 NOTE: the 'get_datapoints' function, which is the primary reason for this library is quite slow. It will
 be replaced in the next version when we have min.io set up on the server to handle very large requests.
 
 Parameters:
     query: a JSON object with the tags, organization, stations, and start/end times
-    endpoint: what API endpoint to query. 'datapoints/lookup' (default), 'station','datastream','datapoint'
-    interval: datalogger minutes between records, integer. 5 = ERCZO (default), 10 = UCNRS, 15 = USGS
+    endpoint: what API endpoint to query. 'datapoints/lookup' (default), 'station','datastream','datapoint', 'annotation'
+    interval: datalogger minutes between records, integer. Organizations generally have a default: 5 = ERCZO, 10 = UCNRS, 15 = USGS
 
 References:
 code repository:  https://github.com/DendraScience
@@ -34,12 +62,15 @@ from getpass import getpass
 import concurrent.futures
 
 # Params
-#url = 'https://api.edge.dendra.science/v1/'  # version 1 of the API has been deprecated
-url = 'https://api.edge.dendra.science/v2/'
+url = 'https://api.edge.dendra.science/v2/'  # version 1 (/v1/) of the API has been deprecated
 headers = {"Content-Type":"application/json"}
 
-# Time Helper Functions
+
+
+###########################################################
+# Time Helper Functions & Authentication
 # These apply standardized formating and UTC conversion
+#
 def time_utc(str_time=""):
     if(str_time == ""):
         dt_time = dt.datetime.now(pytz.utc)
@@ -56,6 +87,7 @@ def time_format(dt_time=dt.datetime.now(), time_type='local'):
         str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
     return str_time
 
+# Authentication is not required for public datasets. Only for restricted datasets. 
 def authenticate(email):
     data = {
         'email': email,
@@ -68,9 +100,14 @@ def authenticate(email):
     headers['Authorization'] = token
     
 
-# List Functions help find what you are looking for, do not retreive full metadata
-def get_organization_id(orgslug = ''):
-    # current options: 'erczo','ucnrs','chi','ucanr','tnc','pepperwood' (may change in future)
+
+###########################################################
+# List Functions help find what you are looking for, does not retreive full metadata
+# Returns id, name,id pairs, or an array of ids
+
+def get_organization_id(orgslug):
+    # orgslug: the short name for an organization. can be found in the url on the dendra.science site.
+    # examples: 'erczo','ucnrs','chi','ucanr','tnc','pepperwood', 'cdfw' (may change in future)
     query = {
         '$select[_id]':1,
         'slug': orgslug
@@ -95,10 +132,9 @@ def list_organizations(orgslug='all'):
     rjson = r.json()
     return rjson['data']    
 
-
 def list_stations(orgslug='all',query_add='none'):
     """
-    orgslug options: 'erczo','ucnrs','chi'
+    orgslug examples: 'erczo','ucnrs','chi'
     NOTE: can either do all orgs or one org. No option to list some,
           unless you custom add to the query."""
     query = {
@@ -155,11 +191,11 @@ def list_datastreams_by_query(query_add = '',station_id = ''):
         query.update({'station_id': station_id})
         
     # Request JSON from Dendra         
-    r = requests.get(url + 'datastreams/lookup', headers=headers, params=query)
+    r = requests.get(url + 'datastreams', headers=headers, params=query)
     assert r.status_code == 200
     rjson = r.json()
     return rjson['data']
-
+    
 def list_datastreams_by_medium_variable(medium = '',variable = '',aggregate = '', station_id = '', orgslug = '', query_add = ''):
     # parameters: 
     # medium: Air, Water, Soil, etc 
@@ -194,7 +230,6 @@ def list_datastreams_by_medium_variable(medium = '',variable = '',aggregate = ''
     
     return rjson['data']
 
-
 def list_datastreams_by_measurement(measurement = '',aggregate = '', station_id = [], orgslug = '', query_add = ''):
     # parameters: measurements and aggregates are spelled out and capitalized
     # measurement: see dendra.science for list. No spaces. (AirTemperature, VolumetricWaterContent, RainfallCumulative, etc.
@@ -225,7 +260,67 @@ def list_datastreams_by_measurement(measurement = '',aggregate = '', station_id 
     rjson = r.json()
     return rjson['data']
 
-    
+
+
+###########################################################
+# Get Metadata Functions
+# Returns full metadata JSON object
+
+def get_meta_organization(orgslug='',orgid=''):
+    if(orgslug != '' and orgid == ''):
+        orgid = get_organization_id(orgslug)
+    if(orgid != ''):
+        query = { '_id': orgid }
+        r = requests.get(url + 'organizations', headers=headers, params=query)
+        assert r.status_code == 200
+        rjson = r.json()
+        return rjson['data'][0]   
+    else:
+        return 'INVALID organization_id'
+
+def get_meta_station_by_id(station_id,query_add = ''):
+    if(type(station_id) is not str):
+        return 'INVALID station_id (bad type)'
+    if(len(station_id) != 24):
+        return 'INVALID station_id (wrong length)'
+    query = { '_id': station_id }
+    if(query_add != ''):
+        query.update(query_add)
+    r = requests.get(url + 'stations', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    return rjson['data'][0]   
+
+def get_meta_datastream_by_id(datastream_id,query_add = ''):
+    if(type(datastream_id) is not str):
+        return 'INVALID DATASTREAM_ID (bad type)'
+    if(len(datastream_id) != 24):
+        return 'INVALID DATASTREAM_ID (wrong length)'
+    query = { '_id': datastream_id }
+    if(query_add != ''):
+        query.update(query_add)
+    r = requests.get(url + 'datastreams', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    return rjson['data'][0]   
+
+def get_meta_annotation(annotation_id,query_add = ''):
+    if(type(annotation_id) is not str):
+        return 'INVALID ANNOTATION_ID (bad type)'
+    if(len(annotation_id) != 24):
+        return 'INVALID ANNOTATION_ID (wrong length)'
+    query = { '_id': annotation_id }
+    if(query_add != ''):
+        query.update(query_add)
+    r = requests.get(url + 'annotations', headers=headers, params=query)
+    assert r.status_code == 200
+    rjson = r.json()
+    return rjson['data'][0]   
+
+# deprecated
+def get_datastream_by_id(datastream_id,query_add = ''): 
+    return get_meta_datastream_by_id(datastream_id,query_add)
+
 def get_datastream_id_from_dsid(dsid,orgslug='all',station_id = ''):
     """translate SensorDB to Dendra ID"""
     # Legacy SensorDB used integer DSID (DatastreamID).  
@@ -272,40 +367,11 @@ def get_datastream_id_from_dsid(dsid,orgslug='all',station_id = ''):
             return datastream_id
 
 
-# GET Metadata returns full metadata
-def get_datastream_by_id(datastream_id,query_add = ''): 
-    # deprecated use get_meta_
-    rjson = get_meta_datastream_by_id(datastream_id,query_add)
-    return rjson
-    
-def get_meta_datastream_by_id(datastream_id,query_add = ''):
-    if(type(datastream_id) is not str):
-        return 'INVALID DATASTREAM_ID (bad type)'
-    if(len(datastream_id) != 24):
-        return 'INVALID DATASTREAM_ID (wrong length)'
-    query = { '_id': datastream_id }
-    if(query_add != ''):
-        query.update(query_add)
-    r = requests.get(url + 'datastreams', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data'][0]   
 
-def get_meta_station_by_id(station_id,query_add = ''):
-    if(type(station_id) is not str):
-        return 'INVALID station_id (bad type)'
-    if(len(station_id) != 24):
-        return 'INVALID station_id (wrong length)'
-    query = { '_id': station_id }
-    if(query_add != ''):
-        query.update(query_add)
-    r = requests.get(url + 'stations', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data'][0]   
+###########################################################
+# Get Datapoints Functions
+# these functions return timestamp,value pairs in a Pandas dataframe
 
-
-# Get Datapoints Functions return the actual data
 def get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='local',name='default'):
     """ GET Datapoints returns actual datavalues for only one datastream.  
     Returns a Pandas DataFrame columns. Both local and UTC time will be returned.
@@ -372,7 +438,7 @@ def get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='
 
     # Convert timestamp columns from 'object' to dt.datetime 
     df.timestamp_local = pd.to_datetime(df.timestamp_local,format="%Y-%m-%dT%H:%M:%S")
-    df.timestamp_utc   = pd.to_datetime(df.timestamp_utc, format="%Y-%m-%dT%H:%M:%S.000Z")
+    df.timestamp_utc   = pd.to_datetime(df.timestamp_utc, format="%Y-%m-%dT%H:%M:%S.000Z",utc=True)
 
     # Set index to timestamp local or utc 
     if(time_type == 'utc'):
@@ -405,7 +471,7 @@ def get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_fo
         for future in concurrent.futures.as_completed(dftemp_list):
             j +=1
             dftemp = future.result()
-            #print('out"',j,datastream_id_list[j],dftemp)
+            #print('out"',j,datastream_id_list[j],dftemp,'type:',type(dftemp))
             # Check to see if any datapoints were returned.  
             # Many datastreams are not functional for the desired time frame.
             # If none, then skip the datastream and continue
@@ -413,7 +479,7 @@ def get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_fo
                 print(j,"ERROR: datastream failed to retrieve. check authentication or ID("+datastream_id_list[j]+")")
                 continue
             elif(dftemp.empty):
-                print("Datastream has no data for this time period. Skipping.")
+                print("datastream ID("+datastream_id_list[j]+")  has no data for this time period. Skipping.")
                 continue             
             # If there are datapoints, check to see if the dataframe has been created yet. 
             # If not, create, if so, add another column
@@ -439,7 +505,8 @@ def get_datapoints_from_station_id(station_id,begins_at,ends_before=time_format(
         dlist.append(ds['_id'])
     df = get_datapoints_from_id_list(dlist,begins_at,ends_before,time_type)
     return df
-        
+
+# Deprecated        
 # Lookup is an earlier attempt. Use get_datapoints unless you have to use this.    
 def __lookup_datapoints_subquery(bigjson,query,endpoint='datapoints/lookup'):
     r = requests.get(url + endpoint, headers=headers, params=query)
@@ -495,7 +562,7 @@ def lookup_datapoints(query,endpoint='datapoints/lookup',interval=5):
 #
 def __main():
     btime = False
-    borg = False
+    borg = True
     bstation = False
     bdatastream_id = False
     bdatapoints = False
@@ -524,20 +591,32 @@ def __main():
     ####################
     # Test Organizations
     if(borg == True):
-        # Get One Organization ID
+        # Get One Organization ID 
+        cdfw = get_organization_id('cdfw')
+        print('List one Organization CDFW ID:',cdfw)
+
+        # Get One Organization ID using list all function
         erczo = list_organizations('erczo')
-        print('Organizations ERCZO ID:',erczo[0]['_id'])
-        
+        print('List Organizations ERCZO ID:',erczo[0]['_id'])
+
         # Get All Organization IDs        
         org_list = list_organizations()
-        print('All Organizations:')
+        print('List All Organizations:')
         print("ID\t\t\tName")
         for org in org_list:
             print(org['_id'],org['name'])
         
         # Send a BAD Organization slug
         orgs = list_organizations('Trump_is_Evil')
-        print('BAD Organizations:',orgs)
+        print('BAD List Organizations:',orgs)
+
+        # Get Metadata for an organization
+        orgslug = 'erczo'
+        meta_erczo_slug = get_meta_organization(orgslug)
+        print('Get metadata organization ERCZO slug:',meta_erczo_slug)
+        erczoid = get_organization_id('orgslug')
+        meta_erczo_id = get_meta_organization('',erczoid)
+        print('Get metadata organization ERCZO ID:',meta_erczo_id)
     
     ####################    
     # Test stations
