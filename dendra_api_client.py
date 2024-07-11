@@ -30,10 +30,10 @@ Get_Meta: returns the full metadata object
     get_meta_station_by_id(station_id,query_add = '')
     get_meta_datastream_by_id(datastream_id,query_add = '')
     get_meta_annotation(annotation_id,query_add = '')
-
-Get_Datapoints: returns timestamp,datavalue pairs
     get_datastream_by_id(datastream_id,query_add = '') 
     get_datastream_id_from_dsid(dsid,orgslug='all',station_id = '')
+    
+Get_Datapoints: returns timestamp,datavalue pairs
     get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='local',name='default')
     get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_format(),time_type='local')
     get_datapoints_from_station_id(station_id,begins_at,ends_before=time_format(),time_type='local')
@@ -60,6 +60,7 @@ from dateutil import tz
 from dateutil.parser import parse
 from getpass import getpass
 import concurrent.futures
+
 
 # Params
 url = 'https://api.edge.dendra.science/v2/'  # version 1 (/v1/) of the API has been deprecated
@@ -437,8 +438,8 @@ def get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='
     df.rename(columns={'lt':'timestamp_local','t':'timestamp_utc','v':datastream_name},inplace=True)
 
     # Convert timestamp columns from 'object' to dt.datetime 
-    df.timestamp_local = pd.to_datetime(df.timestamp_local,format="%Y-%m-%dT%H:%M:%S")
-    df.timestamp_utc   = pd.to_datetime(df.timestamp_utc, format="%Y-%m-%dT%H:%M:%S.000Z",utc=True)
+    df.timestamp_local = pd.to_datetime(df.timestamp_local, format='ISO8601') # format="%Y-%m-%dT%H:%M:%S")
+    df.timestamp_utc   = pd.to_datetime(df.timestamp_utc, format='ISO8601', utc=True) # format="%Y-%m-%dT%H:%M:%S.000Z",utc=True)
 
     # Set index to timestamp local or utc 
     if(time_type == 'utc'):
@@ -561,11 +562,11 @@ def lookup_datapoints(query,endpoint='datapoints/lookup',interval=5):
 # Unit Tests
 #
 def __main():
-    btime = False
-    borg = True
+    btime = True
+    borg = False
     bstation = False
     bdatastream_id = False
-    bdatapoints = False
+    bdatapoints = True
     bdatapoints_lookup = False    
 
     ####################
@@ -614,7 +615,7 @@ def __main():
         orgslug = 'erczo'
         meta_erczo_slug = get_meta_organization(orgslug)
         print('Get metadata organization ERCZO slug:',meta_erczo_slug)
-        erczoid = get_organization_id('orgslug')
+        erczoid = get_organization_id(orgslug)
         meta_erczo_id = get_meta_organization('',erczoid)
         print('Get metadata organization ERCZO ID:',meta_erczo_id)
     
