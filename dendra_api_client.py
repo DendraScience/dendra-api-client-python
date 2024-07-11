@@ -82,10 +82,10 @@ def time_utc(str_time=""):
     return dt_time
 
 def time_format(dt_time=dt.datetime.now(), time_type='local'):
-    if(time_type == 'utc'):
-        str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%SZ") # "%Y-%m-%dT%H:%M:%S.%f"
+    if(time_type == 'utc'): 
+        str_time = dt.datetime.strftime(dt_time, format='ISO8601') # "%Y-%m-%dT%H:%M:%SZ" # "%Y-%m-%dT%H:%M:%S.%f"
     else:
-        str_time = dt.datetime.strftime(dt_time,"%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
+        str_time = dt.datetime.strftime(dt_time, format='ISO8601') # "%Y-%m-%dT%H:%M:%S" # "%Y-%m-%dT%H:%M:%S.%f"
     return str_time
 
 # Authentication is not required for public datasets. Only for restricted datasets. 
