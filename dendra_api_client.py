@@ -83,9 +83,9 @@ def time_utc(str_time=""):
 
 def time_format(dt_time=dt.datetime.now(), time_type='local'):
     if(time_type == 'utc'): 
-        str_time = dt.datetime.strftime(dt_time, format='ISO8601') # "%Y-%m-%dT%H:%M:%SZ" # "%Y-%m-%dT%H:%M:%S.%f"
+        str_time = dt.datetime.strftime(dt_time, "%Y-%m-%dT%H:%M:%SZ") # "%Y-%m-%dT%H:%M:%S.%f"
     else:
-        str_time = dt.datetime.strftime(dt_time, format='ISO8601') # "%Y-%m-%dT%H:%M:%S" # "%Y-%m-%dT%H:%M:%S.%f"
+        str_time = dt.datetime.strftime(dt_time, "%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
     return str_time
 
 # Authentication is not required for public datasets. Only for restricted datasets. 
@@ -661,7 +661,7 @@ def __main():
     # Test Datapoints 
     if(bdatapoints == True):
         airtemp_id = '5ae8793efe27f424f9102b87'
-        from_time = '2019-02-01T08:00:00.000Z' # UTC, not local PST time
+        from_time = '2019-02-01T08:00:00Z' # UTC, not local PST time
         to_time = '2019-03-01T08:00:00Z'
         #to_time = None
         dd = get_datapoints(airtemp_id,from_time,to_time)
@@ -681,7 +681,7 @@ def __main():
         # Parameters
         orgid = '58db17c424dc720001671378' # ucnrs
         station_id = '58e68cabdf5ce600012602b3'
-        from_time = '2019-04-01T08:00:00.000Z' # UTC, not local PST time
+        from_time = '2019-04-01T08:00:00Z' # UTC, not local PST time
         to_time = '2019-05-05T08:00:00Z'
         interval = 10 # 5,10,15
         
