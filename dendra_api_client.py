@@ -1,58 +1,46 @@
 '''
-Dendra API Query
+Dendra API Client
 
 author: Collin Bode
 email: collin@berkeley.edu
 
-Purpose: 
-Simplifies pulling data from the https://dendra.science time-series data management system.
-Dendra API requires paging of records in sets of 2,016.  This library performs
-that function automatically. 
+Python wrapper functions around REST API calls to the Dendra APIv2.
+Simplifies pulling time-series data from https://dendra.science.
+Dendra API pages records in sets of 2,016 maximum; this library handles that automatically.
 
-Functions are grouped into four categories:
+Function groups:
 
 Helper functions
     time_utc(str_time="")
-    time_format(dt_time=dt.datetime.now(), time_type='local') # other option for time_type='utc'
+    time_format(dt_time=None, time_type='local')
     authenticate(email)
 
-List: returns a simple JSON list of available objects
-    get_organization_id(orgslug)
-    list_organizations(orgslug='all')
-    list_stations(orgslug='all',query_add='none')
-    list_datastreams_by_station_id(station_id,query_add = '')
-    list_datastreams_by_query(query_add = '',station_id = '')
-    list_datastreams_by_medium_variable(medium = '',variable = '',aggregate = '', station_id = '', orgslug = '', query_add = '')
-    list_datastreams_by_measurement(measurement = '',aggregate = '', station_id = [], orgslug = '', query_add = '')
+List: returns a simple list of available objects
+    get_organization_id(orgslug, needs_auth=False)
+    list_organizations(orgslug='all', needs_auth=False)
+    list_stations(orgslug='all', query_add=None, needs_auth=False)
+    list_datastreams_by_station_id(station_id, query_add=None, needs_auth=False)
+    list_datastreams_by_query(query_add=None, station_id='', needs_auth=False)
+    list_datastreams_by_medium_variable(medium='', variable='', aggregate='', station_id='', orgslug='', query_add=None, needs_auth=False)
+    list_datastreams_by_measurement(measurement='', aggregate='', station_id=None, orgslug='', query_add=None, needs_auth=False)
 
-Get_Meta: returns the full metadata object
-    get_meta_organization(orgslug='',orgid='')
-    get_meta_station_by_id(station_id,query_add = '')
-    get_meta_datastream_by_id(datastream_id,query_add = '')
-    get_meta_annotation(annotation_id,query_add = '')
-    get_datastream_by_id(datastream_id,query_add = '') 
-    get_datastream_id_from_dsid(dsid,orgslug='all',station_id = '')
-    
-Get_Datapoints: returns timestamp,datavalue pairs
-    get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='local',name='default')
-    get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_format(),time_type='local')
-    get_datapoints_from_station_id(station_id,begins_at,ends_before=time_format(),time_type='local')
+Get_Meta: returns full metadata objects
+    get_meta_organization(orgslug='', orgid='', needs_auth=False)
+    get_meta_station_by_id(station_id, query_add=None, needs_auth=False)
+    get_meta_datastream_by_id(datastream_id, query_add=None, needs_auth=False)
+    get_meta_annotation(annotation_id, query_add=None, needs_auth=False)
+    get_datastream_id_from_dsid(dsid, orgslug='all', station_id='')
 
-NOTE: the 'get_datapoints' function, which is the primary reason for this library is quite slow. It will
-be replaced in the next version when we have min.io set up on the server to handle very large requests.
+Get_Datapoints: returns timestamp/value pairs as a Pandas DataFrame
+    get_datapoints(datastream_id, begins_at, ends_before=None, time_type='local', name='default', needs_auth=False)
+    get_datapoints_from_id_list(datastream_id_list, begins_at, ends_before=None, time_type='local', needs_auth=False)
+    get_datapoints_from_station_id(station_id, begins_at, ends_before=None, time_type='local', needs_auth=False)
 
-Parameters:
-    query: a JSON object with the tags, organization, stations, and start/end times
-    endpoint: what API endpoint to query. 'datapoints/lookup' (default), 'station','datastream','datapoint', 'annotation'
-    interval: datalogger minutes between records, integer. Organizations generally have a default: 5 = ERCZO, 10 = UCNRS, 15 = USGS
-
-References:
-code repository:  https://github.com/DendraScience
-API documentation: https://dendrascience.github.io/dendra-json-schema
+API documentation: https://api-v2-docs.dendra.science/
+Code repository: https://github.com/DendraScience/dendra-api-client-python
 '''
 
 import requests
-import json
 import pandas as pd
 import datetime as dt
 import pytz
@@ -62,651 +50,543 @@ from getpass import getpass
 import concurrent.futures
 
 
-# Params
-url = 'https://api.edge.dendra.science/v2/'  # version 1 (/v1/) of the API has been deprecated
-headers = {"Content-Type":"application/json"}
-
+url = 'https://api.edge.dendra.science/v2/'
+headers = {"Content-Type": "application/json"}
 
 
 ###########################################################
-# Time Helper Functions & Authentication
-# These apply standardized formating and UTC conversion
-#
+# Internal Helpers
+
+def _check_auth():
+    """Raise RuntimeError if no auth token is present in headers."""
+    if 'Authorization' not in headers:
+        raise RuntimeError("Authentication required. Call authenticate() first.")
+
+
+def _validate_mongo_id(value, name='ID'):
+    """Raise TypeError/ValueError if value is not a valid 24-character MongoDB ObjectId string."""
+    if not isinstance(value, str):
+        raise TypeError(f"Invalid {name}: expected a string, got {type(value).__name__}")
+    if len(value) != 24:
+        raise ValueError(f"Invalid {name}: must be 24 characters, got {len(value)}")
+
+
+###########################################################
+# Time Helpers & Authentication
+
 def time_utc(str_time=""):
-    if(str_time == ""):
-        dt_time = dt.datetime.now(pytz.utc)
-    else:
-        dt_time = parse(str_time)
-        if(dt_time.tzinfo != pytz.utc):
-            dt_time = dt_time.astimezone(pytz.utc)
+    """Parse a time string and return a UTC datetime. Returns current UTC time if no string given."""
+    if str_time == "":
+        return dt.datetime.now(pytz.utc)
+    dt_time = parse(str_time)
+    if dt_time.tzinfo != pytz.utc:
+        dt_time = dt_time.astimezone(pytz.utc)
     return dt_time
 
-def time_format(dt_time=dt.datetime.now(), time_type='local'):
-    if(time_type == 'utc'): 
-        str_time = dt.datetime.strftime(dt_time, "%Y-%m-%dT%H:%M:%SZ") # "%Y-%m-%dT%H:%M:%S.%f"
-    else:
-        str_time = dt.datetime.strftime(dt_time, "%Y-%m-%dT%H:%M:%S") # "%Y-%m-%dT%H:%M:%S.%f"
-    return str_time
 
-# Authentication is not required for public datasets. Only for restricted datasets. 
+def time_format(dt_time=None, time_type='local'):
+    """Format a datetime as an ISO 8601 string. Defaults to the current local time."""
+    if dt_time is None:
+        dt_time = dt.datetime.now()
+    if time_type == 'utc':
+        return dt.datetime.strftime(dt_time, "%Y-%m-%dT%H:%M:%SZ")
+    return dt.datetime.strftime(dt_time, "%Y-%m-%dT%H:%M:%S")
+
+
 def authenticate(email):
+    """Authenticate with Dendra and store the access token. Required for non-public datasets."""
     data = {
         'email': email,
         'strategy': 'local',
         'password': getpass()
     }
-    r = requests.post(url+'authentication', json=data)
+    r = requests.post(url + 'authentication', json=data)
     assert r.status_code == 201
-    token = r.json()['accessToken']
-    headers['Authorization'] = token
-    
+    headers['Authorization'] = r.json()['accessToken']
 
 
 ###########################################################
-# List Functions help find what you are looking for, does not retreive full metadata
-# Returns id, name,id pairs, or an array of ids
+# List Functions
 
-def get_organization_id(orgslug):
-    # orgslug: the short name for an organization. can be found in the url on the dendra.science site.
-    # examples: 'erczo','ucnrs','chi','ucanr','tnc','pepperwood', 'cdfw' (may change in future)
-    query = {
-        '$select[_id]':1,
-        'slug': orgslug
-    }   
+def get_organization_id(orgslug, needs_auth=False):
+    """Return the MongoDB _id for an organization given its slug (e.g. 'erczo', 'ucnrs')."""
+    if needs_auth:
+        _check_auth()
+    query = {'$select[_id]': 1, 'slug': orgslug}
     r = requests.get(url + 'organizations', headers=headers, params=query)
     assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data'][0]['_id']    
+    return r.json()['data'][0]['_id']
 
-def list_organizations(orgslug='all'):
-    """ options: 'erczo','ucnrs','chi','tnc','ucanr','pepperwood' """
-    query = {
-        '$sort[name]': 1,
-        '$select[name]':1,
-        '$select[slug]':1
-    }
-    if(orgslug != 'all'):
-        query['slug'] = orgslug
-    
-    r = requests.get(url + 'organizations', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data']    
 
-def list_stations(orgslug='all',query_add='none'):
-    """
-    orgslug examples: 'erczo','ucnrs','chi'
-    NOTE: can either do all orgs or one org. No option to list some,
-          unless you custom add to the query."""
+def list_organizations(orgslug='all', needs_auth=False):
+    """Return a list of organizations. Pass an orgslug to filter to one organization."""
+    if needs_auth:
+        _check_auth()
     query = {
         '$sort[name]': 1,
         '$select[name]': 1,
         '$select[slug]': 1,
-        '$limit': 2016
     }
+    if orgslug != 'all':
+        query['slug'] = orgslug
+    r = requests.get(url + 'organizations', headers=headers, params=query)
+    assert r.status_code == 200
+    return r.json()['data']
 
-    # Narrow query to one organization
-    if(orgslug != 'all'):
+
+def list_stations(orgslug='all', query_add=None, needs_auth=False):
+    """Return a list of stations. Optionally filter by orgslug or extend with query_add."""
+    if needs_auth:
+        _check_auth()
+    query = {
+        '$sort[name]': 1,
+        '$select[name]': 1,
+        '$select[slug]': 1,
+        '$limit': 2016,
+    }
+    if orgslug != 'all':
         org_list = list_organizations(orgslug)
-        if(len(org_list) == 0): 
+        if not org_list:
             return 'ERROR: no organizations found with that acronym.'
-        orgid = org_list[0]['_id'] 
-        query['organization_id'] = orgid
-
-    # Modify query adding custom elements
-    if(query_add != 'none'):
-        for element in query_add:
-            query[element] = query_add[element]
-
-    # Request JSON from Dendra         
+        query['organization_id'] = org_list[0]['_id']
+    if query_add is not None:
+        query.update(query_add)
     r = requests.get(url + 'stations', headers=headers, params=query)
     assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data']
+    return r.json()['data']
 
-def list_datastreams_by_station_id(station_id,query_add = ''):
+
+def list_datastreams_by_station_id(station_id, query_add=None, needs_auth=False):
+    """Return a list of datastreams for a given station_id."""
+    if needs_auth:
+        _check_auth()
     query = {
         '$sort[name]': 1,
         '$select[name]': 1,
         'station_id': station_id,
-        '$limit': 2016
+        '$limit': 2016,
     }
-    if(query_add != ''):
-        query.update(query_add)    
-
-    # Request JSON from Dendra         
-    r = requests.get(url + 'datastreams', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data']
-
-def list_datastreams_by_query(query_add = '',station_id = ''):
-    query = {
-        '$sort[name]': 1,
-        '$select[name]': 1,
-        '$limit': 2016
-    }
-    if(query_add != ''):
-        query.update(query_add)    
-    if(station_id != ''):
-        query.update({'station_id': station_id})
-        
-    # Request JSON from Dendra         
-    r = requests.get(url + 'datastreams', headers=headers, params=query)
-    assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data']
-    
-def list_datastreams_by_medium_variable(medium = '',variable = '',aggregate = '', station_id = '', orgslug = '', query_add = ''):
-    # parameters: 
-    # medium: Air, Water, Soil, etc 
-    # variable: Temperature, Moisture, Radiation, etc
-    # aggregate: Minimum, Average, Maximum, Cumulative
-    # station_id: MongoID
-    # orgslug: shortname (currently erczo, ucnrs, chi, ucanr, tnc, pepperwood)
-    # query_add: JSON query please see documentation https://dendrascience.github.io/dendra-json-schema/
-    query = {
-        '$sort[name]': 1,
-        '$select[name]': 1,
-        '$limit': 2016
-    }
-    if(medium != ''):
-        query.update({'terms_info.class_tags[$all][0]':"ds_Medium_"+medium})
-    if(variable != ''):
-        query.update({'terms_info.class_tags[$all][1]':"ds_Variable_"+variable})
-    if(aggregate != ''):
-        query.update({'terms_info.class_tags[$all][2]':"ds_Aggregate_"+aggregate})    
-    if(station_id != ''):
-        query.update({'station_id': station_id})
-    if(orgslug != ''):
-        orgid = get_organization_id(orgslug)
-        query.update({'organization_id': orgid})
-    if(query_add != ''):
+    if query_add is not None:
         query.update(query_add)
-        
-    # Request JSON from Dendra         
     r = requests.get(url + 'datastreams', headers=headers, params=query)
     assert r.status_code == 200
-    rjson = r.json()
-    
-    return rjson['data']
+    return r.json()['data']
 
-def list_datastreams_by_measurement(measurement = '',aggregate = '', station_id = [], orgslug = '', query_add = ''):
-    # parameters: measurements and aggregates are spelled out and capitalized
-    # measurement: see dendra.science for list. No spaces. (AirTemperature, VolumetricWaterContent, RainfallCumulative, etc.
-    # aggregate: Minimum, Average, Maximum, Cumulative
-    # station_id: MongoID
-    # orgslug: shortname (currently erczo, ucnrs, chi, ucanr, tnc, pepperwood)
-    # query_add: JSON query please see documentation https://dendrascience.github.io/dendra-json-schema/
+
+def list_datastreams_by_query(query_add=None, station_id='', needs_auth=False):
+    """Return a list of datastreams filtered by an arbitrary query dict and optional station_id."""
+    if needs_auth:
+        _check_auth()
     query = {
         '$sort[name]': 1,
         '$select[name]': 1,
-        '$limit': 2016
+        '$limit': 2016,
     }
-    if(measurement != ''):
-        query.update({'terms_info.class_tags[$all][0]':"dq_Measurement_"+measurement})
-    if(aggregate != ''):
-        query.update({'terms_info.class_tags[$all][2]':"ds_Aggregate_"+aggregate})    
-    if(station_id != []):
-        query.update({'station_id': station_id})
-    if(orgslug != ''):
-        orgid = get_organization_id(orgslug)
-        query.update({'organization_id': orgid})
-    if(query_add != ''):
+    if query_add is not None:
         query.update(query_add)
-        
-    # Request JSON from Dendra         
+    if station_id:
+        query['station_id'] = station_id
     r = requests.get(url + 'datastreams', headers=headers, params=query)
     assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data']
+    return r.json()['data']
 
+
+def list_datastreams_by_medium_variable(medium='', variable='', aggregate='', station_id='', orgslug='', query_add=None, needs_auth=False):
+    """Return datastreams matching medium/variable/aggregate class tags.
+    medium: Air, Water, Soil, etc. variable: Temperature, Moisture, etc. aggregate: Minimum, Average, Maximum, Cumulative
+    """
+    if needs_auth:
+        _check_auth()
+    query = {
+        '$sort[name]': 1,
+        '$select[name]': 1,
+        '$limit': 2016,
+    }
+    if medium:
+        query['terms_info.class_tags[$all][0]'] = 'ds_Medium_' + medium
+    if variable:
+        query['terms_info.class_tags[$all][1]'] = 'ds_Variable_' + variable
+    if aggregate:
+        query['terms_info.class_tags[$all][2]'] = 'ds_Aggregate_' + aggregate
+    if station_id:
+        query['station_id'] = station_id
+    if orgslug:
+        query['organization_id'] = get_organization_id(orgslug)
+    if query_add is not None:
+        query.update(query_add)
+    r = requests.get(url + 'datastreams', headers=headers, params=query)
+    assert r.status_code == 200
+    return r.json()['data']
+
+
+def list_datastreams_by_measurement(measurement='', aggregate='', station_id=None, orgslug='', query_add=None, needs_auth=False):
+    """Return datastreams matching a Dendra measurement vocabulary term.
+    measurement: e.g. AirTemperature, VolumetricWaterContent, RainfallCumulative (no spaces, capitalized).
+    See https://dendra.science/vocabulary for the full list.
+    """
+    if needs_auth:
+        _check_auth()
+    query = {
+        '$sort[name]': 1,
+        '$select[name]': 1,
+        '$limit': 2016,
+    }
+    if measurement:
+        query['terms_info.class_tags[$all][0]'] = 'dq_Measurement_' + measurement
+    if aggregate:
+        query['terms_info.class_tags[$all][2]'] = 'ds_Aggregate_' + aggregate
+    if station_id:
+        query['station_id'] = station_id
+    if orgslug:
+        query['organization_id'] = get_organization_id(orgslug)
+    if query_add is not None:
+        query.update(query_add)
+    r = requests.get(url + 'datastreams', headers=headers, params=query)
+    assert r.status_code == 200
+    return r.json()['data']
 
 
 ###########################################################
 # Get Metadata Functions
-# Returns full metadata JSON object
 
-def get_meta_organization(orgslug='',orgid=''):
-    if(orgslug != '' and orgid == ''):
+def get_meta_organization(orgslug='', orgid='', needs_auth=False):
+    """Return full metadata for an organization by slug or id."""
+    if needs_auth:
+        _check_auth()
+    if orgslug and not orgid:
         orgid = get_organization_id(orgslug)
-    if(orgid != ''):
-        query = { '_id': orgid }
-        r = requests.get(url + 'organizations', headers=headers, params=query)
-        assert r.status_code == 200
-        rjson = r.json()
-        return rjson['data'][0]   
-    else:
-        return 'INVALID organization_id'
+    if not orgid:
+        raise ValueError("Provide either orgslug or orgid.")
+    r = requests.get(url + 'organizations', headers=headers, params={'_id': orgid})
+    assert r.status_code == 200
+    return r.json()['data'][0]
 
-def get_meta_station_by_id(station_id,query_add = ''):
-    if(type(station_id) is not str):
-        return 'INVALID station_id (bad type)'
-    if(len(station_id) != 24):
-        return 'INVALID station_id (wrong length)'
-    query = { '_id': station_id }
-    if(query_add != ''):
+
+def get_meta_station_by_id(station_id, query_add=None, needs_auth=False):
+    """Return full metadata for a station given its MongoDB _id."""
+    if needs_auth:
+        _check_auth()
+    _validate_mongo_id(station_id, 'station_id')
+    query = {'_id': station_id}
+    if query_add is not None:
         query.update(query_add)
     r = requests.get(url + 'stations', headers=headers, params=query)
     assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data'][0]   
+    return r.json()['data'][0]
 
-def get_meta_datastream_by_id(datastream_id,query_add = ''):
-    if(type(datastream_id) is not str):
-        return 'INVALID DATASTREAM_ID (bad type)'
-    if(len(datastream_id) != 24):
-        return 'INVALID DATASTREAM_ID (wrong length)'
-    query = { '_id': datastream_id }
-    if(query_add != ''):
+
+def get_meta_datastream_by_id(datastream_id, query_add=None, needs_auth=False):
+    """Return full metadata for a datastream given its MongoDB _id."""
+    if needs_auth:
+        _check_auth()
+    _validate_mongo_id(datastream_id, 'datastream_id')
+    query = {'_id': datastream_id}
+    if query_add is not None:
         query.update(query_add)
     r = requests.get(url + 'datastreams', headers=headers, params=query)
     assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data'][0]   
+    return r.json()['data'][0]
 
-def get_meta_annotation(annotation_id,query_add = ''):
-    if(type(annotation_id) is not str):
-        return 'INVALID ANNOTATION_ID (bad type)'
-    if(len(annotation_id) != 24):
-        return 'INVALID ANNOTATION_ID (wrong length)'
-    query = { '_id': annotation_id }
-    if(query_add != ''):
+
+def get_meta_annotation(annotation_id, query_add=None, needs_auth=False):
+    """Return full metadata for an annotation given its MongoDB _id."""
+    if needs_auth:
+        _check_auth()
+    _validate_mongo_id(annotation_id, 'annotation_id')
+    query = {'_id': annotation_id}
+    if query_add is not None:
         query.update(query_add)
     r = requests.get(url + 'annotations', headers=headers, params=query)
     assert r.status_code == 200
-    rjson = r.json()
-    return rjson['data'][0]   
+    return r.json()['data'][0]
 
-# deprecated
-def get_datastream_by_id(datastream_id,query_add = ''): 
-    return get_meta_datastream_by_id(datastream_id,query_add)
 
-def get_datastream_id_from_dsid(dsid,orgslug='all',station_id = ''):
-    """translate SensorDB to Dendra ID"""
-    # Legacy SensorDB used integer DSID (DatastreamID).  
-    # This is a helper function to translate between Dendra datastream_id's and DSID's
-    query = {'$limit':2016}
+def get_datastream_by_id(datastream_id, query_add=None):
+    """Deprecated. Use get_meta_datastream_by_id instead."""
+    return get_meta_datastream_by_id(datastream_id, query_add)
 
-    # Narrow query to one station
-    if(station_id != ''):
-        query.update({'station_id':station_id})
 
-    # Narrow query to one org or loop through all organizations
+def get_datastream_id_from_dsid(dsid, orgslug='all', station_id=''):
+    """Translate a legacy SensorDB integer DSID to a Dendra MongoDB datastream_id."""
+    query = {'$limit': 2016}
+    if station_id:
+        query['station_id'] = station_id
+
     org_list = list_organizations(orgslug)
-    if(len(org_list) == 0): 
+    if not org_list:
         print('ERROR: no organizations found with that acronym.')
         return ''
-    # Build list of metadata 
-    bigjson = {'data':[]}
-    for org in org_list:
-        orgid = org['_id']
-        orgname = org['name']
-        #print(orgname,orgid,query)
-        query_org = query
-        query_org.update({'organization_id': orgid})
-        r = requests.get(url + 'datastreams', headers=headers, params=query)
-        assert r.status_code == 200
-        rjson = r.json()
-        if(len(rjson['data']) > 0):
-            bigjson['data'].extend(rjson['data'])
-            #print(orgname,len(rjson['data']))
-    dsid_list = []
-    for ds in bigjson['data']:
-        #print(ds['name'],ds['_id'])
-        if('external_refs' not in ds):
-            continue
-        for ref in ds['external_refs']:
-            if(ref['type'] == 'odm.datastreams.DatastreamID'):
-                #print("\t",ref['type'], ref['identifier'])
-                dsid_list.append([ref['identifier'],ds['_id']])
-    for row in dsid_list:
-        int_dsid = int(row[0])
-        datastream_id = row[1]
-        if(dsid == int_dsid):
-            #print('FOUND!',dsid,int_dsid,datastream_id)
-            return datastream_id
 
+    all_data = []
+    for org in org_list:
+        query_org = query.copy()
+        query_org['organization_id'] = org['_id']
+        r = requests.get(url + 'datastreams', headers=headers, params=query_org)
+        assert r.status_code == 200
+        all_data.extend(r.json()['data'])
+
+    for ds in all_data:
+        for ref in ds.get('external_refs', []):
+            if ref['type'] == 'odm.datastreams.DatastreamID' and int(ref['identifier']) == dsid:
+                return ds['_id']
 
 
 ###########################################################
 # Get Datapoints Functions
-# these functions return timestamp,value pairs in a Pandas dataframe
 
-def get_datapoints(datastream_id,begins_at,ends_before=time_format(),time_type='local',name='default'):
-    """ GET Datapoints returns actual datavalues for only one datastream.  
-    Returns a Pandas DataFrame columns. Both local and UTC time will be returned.
-    Parameters: ends_before is optional. Defaults to now. time_type is optional default 'local', either 'utc' or 'local' 
-    if you choose 'utc', timestamps must have 'Z' at the end to indicate UTC time."""
+def get_datapoints(datastream_id, begins_at, ends_before=None, time_type='local', name='default', needs_auth=False):
+    """Return datapoints for one datastream as a Pandas DataFrame with a timestamp index.
+    ends_before defaults to now. time_type is 'local' (default) or 'utc'.
+    If time_type='utc', timestamps must end with 'Z'.
+    """
+    if needs_auth:
+        _check_auth()
+    _validate_mongo_id(datastream_id, 'datastream_id')
 
-    if(type(datastream_id) is not str):
-        return 'INVALID DATASTREAM_ID (bad type)'
-    if(len(datastream_id) != 24):
-        return 'INVALID DATASTREAM_ID (wrong length)'
-    if(time_type == 'utc' and ends_before[-1] != 'Z'):
+    if ends_before is None:
+        ends_before = time_format()
+    if time_type == 'utc' and not ends_before.endswith('Z'):
         ends_before += 'Z'
-        
+
     query = {
         'datastream_id': datastream_id,
         'time[$gte]': begins_at,
         'time[$lt]': ends_before,
-        '$sort[time]': "1",
-        '$limit': "2016"
-    } 
-    if(time_type == 'utc'):
+        '$sort[time]': '1',
+        '$limit': '2016',
+    }
+    if time_type == 'utc':
         time_col = 't'
     else:
-        query.update({ 'time_local': "true" })
+        query['time_local'] = 'true'
         time_col = 'lt'
-        
-    # Dendra requires paging of 2,000 records maximum at a time.
-    # To get around this, we loop through multiple requests and append
-    # the results into a single dataset.
-    try:
-        r = requests.get(url + 'datapoints', headers=headers, params=query)
-        assert r.status_code == 200
-    except:
+
+    r = requests.get(url + 'datapoints', headers=headers, params=query)
+    if r.status_code != 200:
         return r.status_code
-    rjson = r.json()
-    bigjson = rjson
-    while(len(rjson['data']) > 0):
-        df = pd.DataFrame.from_records(bigjson['data'])
-        time_last = df[time_col].max()  # issue#1 miguel
-        query['time[$gt]'] = time_last
+
+    # Page through all results (Dendra max 2,016 records per request)
+    all_data = []
+    page = r.json()['data']
+    while page:
+        all_data.extend(page)
+        query.pop('time[$gte]', None)
+        query['time[$gt]'] = page[-1][time_col]
         r = requests.get(url + 'datapoints', headers=headers, params=query)
         assert r.status_code == 200
-        rjson = r.json()
-        bigjson['data'].extend(rjson['data'])
+        page = r.json()['data']
 
-    # Create Pandas DataFrame and set time as index
-    # If the datastream has data for the time period, populate DataFrame
-    if(len(bigjson['data']) > 0):
-        df = pd.DataFrame.from_records(bigjson['data'])
+    if all_data:
+        df = pd.DataFrame.from_records(all_data)
     else:
-        df = pd.DataFrame(columns={'lt','t','v'})
-        
-    # Get human readable name for data column
-    if(name != 'default'):
+        df = pd.DataFrame(columns=['lt', 't', 'v'])
+
+    if name == 'default':
+        ds_meta = get_meta_datastream_by_id(datastream_id, {'$select[name]': 1, '$select[station_id]': 1})
+        stn_meta = get_meta_station_by_id(ds_meta['station_id'], {'$select[slug]': 1})
+        stn = stn_meta['slug'].replace('-', ' ').title().replace(' ', '')
+        datastream_name = stn + '_' + ds_meta['name'].replace(' ', '_')
+    else:
         datastream_name = name
-    else:
-        datastream_meta = get_meta_datastream_by_id(datastream_id,{'$select[name]':1,'$select[station_id]':1})
-        station_meta = get_meta_station_by_id(datastream_meta['station_id'],{'$select[slug]':1})
-        stn = station_meta['slug'].replace('-',' ').title().replace(' ','')
-        datastream_name = stn+'_'+datastream_meta['name'].replace(' ','_')
-    
-    # Rename columns
-    df.rename(columns={'lt':'timestamp_local','t':'timestamp_utc','v':datastream_name},inplace=True)
 
-    # Convert timestamp columns from 'object' to dt.datetime 
-    df.timestamp_local = pd.to_datetime(df.timestamp_local, format='ISO8601') # format="%Y-%m-%dT%H:%M:%S")
-    df.timestamp_utc   = pd.to_datetime(df.timestamp_utc, format='ISO8601', utc=True) # format="%Y-%m-%dT%H:%M:%S.000Z",utc=True)
+    df.rename(columns={'lt': 'timestamp_local', 't': 'timestamp_utc', 'v': datastream_name}, inplace=True)
+    df['timestamp_local'] = pd.to_datetime(df['timestamp_local'], format='ISO8601')
+    df['timestamp_utc'] = pd.to_datetime(df['timestamp_utc'], format='ISO8601', utc=True)
 
-    # Set index to timestamp local or utc 
-    if(time_type == 'utc'):
-        df.set_index('timestamp_utc', inplace=True, drop=True)  
+    if time_type == 'utc':
+        df.set_index('timestamp_utc', inplace=True, drop=True)
     else:
         df.set_index('timestamp_local', inplace=True, drop=True)
 
-    # Return DataFrame
     return df
 
 
-def get_datapoints_from_id_list(datastream_id_list,begins_at,ends_before=time_format(),time_type='local'):
-    """ GET Datapoints from List returns a dataframe of datapoints from a list of datastream ids. The function is 
-    threaded for speed.  List must be an array of text variables which are datastream ids.  The first datastream
-    on the list will create the time-index, so it is best if this one is the most complete of the list. If it has 
-    time gaps, the rest of the dataframe can be compromised.  This may need to be changes in the future.
-    All requirements of above get_datapoints apply to get_datapoints_from_list."""
-    i = -1
-    j = -1
-    boo_new = True
-    dftemp_list = [] # list of dataframes from the results
+def get_datapoints_from_id_list(datastream_id_list, begins_at, ends_before=None, time_type='local', needs_auth=False):
+    """Return a merged DataFrame of datapoints from multiple datastream IDs (threaded).
+    The first datastream to complete sets the time index.
+    """
+    if needs_auth:
+        _check_auth()
+    if ends_before is None:
+        ends_before = time_format()
+
+    df = None
+    future_to_dsid = {}
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for dsid in datastream_id_list:
-            i += 1
-            future = executor.submit(get_datapoints,dsid,begins_at,ends_before,time_type,'default')
-            dftemp_list.append(future)
-            #print('in: ',i,datastream_id_list[i],dsid,future)
+            future = executor.submit(get_datapoints, dsid, begins_at, ends_before, time_type, 'default')
+            future_to_dsid[future] = dsid
 
-        for future in concurrent.futures.as_completed(dftemp_list):
-            j +=1
+        for i, future in enumerate(concurrent.futures.as_completed(future_to_dsid)):
+            dsid = future_to_dsid[future]
             dftemp = future.result()
-            #print('out"',j,datastream_id_list[j],dftemp,'type:',type(dftemp))
-            # Check to see if any datapoints were returned.  
-            # Many datastreams are not functional for the desired time frame.
-            # If none, then skip the datastream and continue
-            if(type(dftemp) is int):
-                print(j,"ERROR: datastream failed to retrieve. check authentication or ID("+datastream_id_list[j]+")")
+
+            if isinstance(dftemp, int):
+                print(f"{i} ERROR: failed to retrieve datastream ({dsid}). Check authentication or ID.")
                 continue
-            elif(dftemp.empty):
-                print("datastream ID("+datastream_id_list[j]+")  has no data for this time period. Skipping.")
-                continue             
-            # If there are datapoints, check to see if the dataframe has been created yet. 
-            # If not, create, if so, add another column
-            if(boo_new == True):
+            if dftemp.empty:
+                print(f"Datastream ({dsid}) has no data for this time period. Skipping.")
+                continue
+
+            if df is None:
                 df = dftemp
-                boo_new = False
-                print(j,dftemp.columns[1],'NEW dataframe created!')
+                print(f"{i} {dftemp.columns[1]} NEW dataframe created!")
             else:
-                # Annotations are listed in a 'q' column. Remove for now.
-                if('q' in dftemp.columns):
-                    dftemp.drop('q',axis=1,inplace=True)
-                # timestamp_utc column will be redundant if merged, so drop
-                dftemp.drop('timestamp_utc',axis=1,inplace=True)
-                df = df.merge(dftemp,how="left",left_index=True,right_index=True)
-                print(j,dftemp.columns[0],'added.')
+                if 'q' in dftemp.columns:
+                    dftemp.drop('q', axis=1, inplace=True)
+                if 'timestamp_utc' in dftemp.columns:
+                    dftemp.drop('timestamp_utc', axis=1, inplace=True)
+                df = df.merge(dftemp, how='left', left_index=True, right_index=True)
+                print(f"{i} {dftemp.columns[0]} added.")
+
     return df
 
-def get_datapoints_from_station_id(station_id,begins_at,ends_before=time_format(),time_type='local'):
-    """ Returns a dataframe with ALL datastreams associated with a particular station for the time period """
-    dlist = []
+
+def get_datapoints_from_station_id(station_id, begins_at, ends_before=None, time_type='local', needs_auth=False):
+    """Return a DataFrame with all datastreams for a station for the given time period."""
+    if needs_auth:
+        _check_auth()
+    if ends_before is None:
+        ends_before = time_format()
     ds_list = list_datastreams_by_station_id(station_id)
-    for ds in ds_list:
-        dlist.append(ds['_id'])
-    df = get_datapoints_from_id_list(dlist,begins_at,ends_before,time_type)
-    return df
+    dlist = [ds['_id'] for ds in ds_list]
+    return get_datapoints_from_id_list(dlist, begins_at, ends_before, time_type)
 
-# Deprecated        
-# Lookup is an earlier attempt. Use get_datapoints unless you have to use this.    
-def __lookup_datapoints_subquery(bigjson,query,endpoint='datapoints/lookup'):
+
+###########################################################
+# Deprecated Functions
+
+def _lookup_datapoints_subquery(bigjson, query, endpoint='datapoints/lookup'):
     r = requests.get(url + endpoint, headers=headers, params=query)
     assert r.status_code == 200
     rjson = r.json()
-    if(len(bigjson) == 0): # First pull assigns the metadata 
+    if not bigjson:
         bigjson = rjson
-    else:  # all others just add to the datapoints
-        for i in range(0,len(bigjson)):
+    else:
+        for i in range(len(bigjson)):
             bigjson[i]['datapoints']['data'].extend(rjson[i]['datapoints']['data'])
     return bigjson
 
-def lookup_datapoints(query,endpoint='datapoints/lookup',interval=5):    
-    # Determine start and end timestamps
-    # Start time
-    #begins_at_original = dt.datetime.strptime(query['time[$gte]'],'%Y-%m-%dT%H:%M:%SZ')
+
+def lookup_datapoints(query, endpoint='datapoints/lookup', interval=5):
+    """Deprecated. Use get_datapoints instead."""
     begins_at_original = parse(query['time[$gte]'])
-    #begins_at_original = pytz.utc.localize(begins_at_original)
-    # end time
-    if('time[$lt]' in query):
-        #ends_before_original = dt.datetime.strptime(query['time[$lt]'],'%Y-%m-%dT%H:%M:%SZ')
+    if 'time[$lt]' in query:
         ends_before_original = parse(query['time[$lt]'])
-        #ends_before_original = pytz.utc.localize(ends_before_original)
-    else: 
-        ends_before_original_local = dt.datetime.now(tz.tzlocal())
-        ends_before_original = ends_before_original_local.astimezone(pytz.utc)
-    
-    # Paging limit: 2016 records. 
-    interval2k = (dt.timedelta(minutes=interval) * 2016 )
+    else:
+        ends_before_original = dt.datetime.now(tz.tzlocal()).astimezone(pytz.utc)
 
-    # Perform repeat queries until the ends_before catches up with the target end date
+    interval2k = dt.timedelta(minutes=interval) * 2016
     begins_at = begins_at_original
-    ends_before = begins_at_original+interval2k
+    ends_before = begins_at_original + interval2k
     bigjson = {}
-    while(ends_before < ends_before_original and begins_at < ends_before_original):    
-        bigjson = __lookup_datapoints_subquery(bigjson,query,endpoint)
+
+    while ends_before < ends_before_original and begins_at < ends_before_original:
+        bigjson = _lookup_datapoints_subquery(bigjson, query, endpoint)
         begins_at = ends_before
-        ends_before = begins_at+interval2k 
-    # One final pull after loop for the under 2016 records left
-    bigjson = __lookup_datapoints_subquery(bigjson,query,endpoint)
+        ends_before = begins_at + interval2k
+    bigjson = _lookup_datapoints_subquery(bigjson, query, endpoint)
 
-    # Count total records pulled and update limit metadata
-    max_records = pd.date_range(start=begins_at_original,end=ends_before_original, tz='UTC',freq=str(interval)+'min')
-    for i in range(0,len(bigjson)):
-        bigjson[i]['datapoints']['limit'] = len(max_records) 
+    max_records = pd.date_range(
+        start=begins_at_original, end=ends_before_original, tz='UTC', freq=f"{interval}min"
+    )
+    for i in range(len(bigjson)):
+        bigjson[i]['datapoints']['limit'] = len(max_records)
 
-    # return the full metadata and records
     return bigjson
 
 
-###############################################################################
-# Unit Tests
-#
-def __main():
+###########################################################
+# Manual Tests (run with: python dendra_api_client.py)
+
+def _run_tests():
     btime = True
     borg = False
     bstation = False
     bdatastream_id = False
     bdatapoints = True
-    bdatapoints_lookup = False    
+    bdatapoints_lookup = False
 
-    ####################
-    # Test Time
-    if(btime == True):
-        # time_utc converts string to datetime
+    if btime:
         string_utc = '2019-03-01T08:00:00Z'
-        print('UTC:',time_utc(string_utc))
+        print('UTC:', time_utc(string_utc))
         string_edt = '2019-03-01T08:00:00-0400'
-        print('EDT:',time_utc(string_edt))
+        print('EDT:', time_utc(string_edt))
         string_hst = '2019-03-01T08:00:00HST'
-        print('HST:',time_utc(string_hst))
-        print('Empty (local default):',time_utc())
-        
-        # time_format converts datetime to utc string
-        tu = dt.datetime.strptime(string_utc,'%Y-%m-%dT%H:%M:%SZ')
-        print('time_format utc:',time_format(tu))
-        te = dt.datetime.strptime(string_edt,'%Y-%m-%dT%H:%M:%S%z')
-        print('time_format edt:',time_format(te))
-        print('time_format empty:',time_format())
-    
-    
-    ####################
-    # Test Organizations
-    if(borg == True):
-        # Get One Organization ID 
+        print('HST:', time_utc(string_hst))
+        print('Empty (local default):', time_utc())
+
+        tu = dt.datetime.strptime(string_utc, '%Y-%m-%dT%H:%M:%SZ')
+        print('time_format utc:', time_format(tu, 'utc'))
+        te = dt.datetime.strptime(string_edt, '%Y-%m-%dT%H:%M:%S%z')
+        print('time_format edt:', time_format(te))
+        print('time_format empty:', time_format())
+
+    if borg:
         cdfw = get_organization_id('cdfw')
-        print('List one Organization CDFW ID:',cdfw)
-
-        # Get One Organization ID using list all function
+        print('List one Organization CDFW ID:', cdfw)
         erczo = list_organizations('erczo')
-        print('List Organizations ERCZO ID:',erczo[0]['_id'])
-
-        # Get All Organization IDs        
+        print('List Organizations ERCZO ID:', erczo[0]['_id'])
         org_list = list_organizations()
         print('List All Organizations:')
-        print("ID\t\t\tName")
         for org in org_list:
-            print(org['_id'],org['name'])
-        
-        # Send a BAD Organization slug
-        orgs = list_organizations('Trump_is_Evil')
-        print('BAD List Organizations:',orgs)
+            print(org['_id'], org['name'])
+        meta_erczo = get_meta_organization('erczo')
+        print('Get metadata organization ERCZO slug:', meta_erczo)
+        erczoid = get_organization_id('erczo')
+        meta_erczo_id = get_meta_organization(orgid=erczoid)
+        print('Get metadata organization ERCZO ID:', meta_erczo_id)
 
-        # Get Metadata for an organization
-        orgslug = 'erczo'
-        meta_erczo_slug = get_meta_organization(orgslug)
-        print('Get metadata organization ERCZO slug:',meta_erczo_slug)
-        erczoid = get_organization_id(orgslug)
-        meta_erczo_id = get_meta_organization('',erczoid)
-        print('Get metadata organization ERCZO ID:',meta_erczo_id)
-    
-    ####################    
-    # Test stations
-    if(bstation == True):
-        # Get All stations
+    if bstation:
         st_list = list_stations()
-        print('\nALL Organization Stations\n',st_list)
-        
-        # Get Stations from UCNRS only
+        print('\nALL Organization Stations\n', st_list)
         stslug = 'ucnrs'
         st_list = list_stations(stslug)
-        #print(st_erczo)    
-        print('\n',stslug.upper(),'Stations\n')
-        print("ID\t\t\tName\t\tSlug")
+        print(f'\n{stslug.upper()} Stations\n')
         for station in st_list:
-            print(station['_id'],station['name'],"\t",station['slug'])
-        
-        # Modify Query
-        query_add = {'$select[station_type]':1}
-        print(query_add)
-        st_list = list_stations(stslug) #,query_add)
-        print('\n',stslug.upper(),'Stations with station_type added\n',st_list)    
-    
-        # What happens when you send a BAD organization string?
+            print(station['_id'], station['name'], '\t', station['slug'])
         st_list = list_stations('Trump is Evil')
-        print('\nBAD Organizations Stations\n',st_list)
-     
-    ####################    
-    # Test Datastream from id
-    if(bdatastream_id == True):
-        # Get all Metadata about one Datastream 'South Meadow WS, Air Temp C'        
+        print('\nBAD Organizations Stations\n', st_list)
+
+    if bdatastream_id:
         airtemp_id = '5ae8793efe27f424f9102b87'
         airtemp_meta = get_meta_datastream_by_id(airtemp_id)
         print(airtemp_meta)
-        
-        # Get only Name from Metadata using query_add
-        airtemp_meta = get_meta_datastream_by_id(airtemp_id,{'$select[name]':1})
+        airtemp_meta = get_meta_datastream_by_id(airtemp_id, {'$select[name]': 1})
         print(airtemp_meta)
-                
-    ####################        
-    # Test Datapoints 
-    if(bdatapoints == True):
+
+    if bdatapoints:
         airtemp_id = '5ae8793efe27f424f9102b87'
-        from_time = '2019-02-01T08:00:00Z' # UTC, not local PST time
+        from_time = '2019-02-01T08:00:00Z'
         to_time = '2019-03-01T08:00:00Z'
-        #to_time = None
-        dd = get_datapoints(airtemp_id,from_time,to_time)
+        dd = get_datapoints(airtemp_id, from_time, to_time)
         dups = dd[dd.duplicated(keep=False)]
-        print('get_datapoints count:',len(dd),'min date:',dd.index.min(),'max date:',dd.index.max())
-        print('duplicates?\n',dups)
-        
-        # No end date
-        to_time = None
-        dd = get_datapoints(airtemp_id,from_time)
-        print('get_datapoints end date set to now, count:',len(dd),'min date:',dd.index.min(),'max date:',dd.index.max())
+        print('get_datapoints count:', len(dd), 'min date:', dd.index.min(), 'max date:', dd.index.max())
+        print('duplicates?\n', dups)
+        dd = get_datapoints(airtemp_id, from_time)
+        print('get_datapoints end date set to now, count:', len(dd))
         print(dd)
-        
-    ####################        
-    # Test Datapoints Lookup 
-    if(bdatapoints_lookup == True):
-        # Parameters
-        orgid = '58db17c424dc720001671378' # ucnrs
+
+    if bdatapoints_lookup:
         station_id = '58e68cabdf5ce600012602b3'
-        from_time = '2019-04-01T08:00:00Z' # UTC, not local PST time
+        from_time = '2019-04-01T08:00:00Z'
         to_time = '2019-05-05T08:00:00Z'
-        interval = 10 # 5,10,15
-        
-        tags = [
-            'ds_Medium_Air',
-            'ds_Variable_Temperature',
-            'ds_Aggregate_Average'
-        ]
+        interval = 10
+        tags = ['ds_Medium_Air', 'ds_Variable_Temperature', 'ds_Aggregate_Average']
         query = {
             'station_id': station_id,
             'time[$gte]': from_time,
+            'time[$lt]': to_time,
             'tags': '.'.join(tags),
             '$sort[time]': 1,
             'time_local': 1,
-            '$limit': 2000
+            '$limit': 2000,
         }
-        if('to_time' in locals()):
-        	query['time[$lt]'] = to_time
-        #print(query)
-        # Test the Query
-        bigjson = lookup_datapoints(query,'datapoints/lookup',interval)
-        
-        # Show the results
+        bigjson = lookup_datapoints(query, 'datapoints/lookup', interval)
         for doc in bigjson:
-            print(doc['name'],len(doc['datapoints']['data']),doc['datapoints']['limit'],doc['_id'])
+            print(doc['name'], len(doc['datapoints']['data']), doc['datapoints']['limit'], doc['_id'])
 
-if(__name__ == '__main__'):
-    __main()
+
+if __name__ == '__main__':
+    _run_tests()
